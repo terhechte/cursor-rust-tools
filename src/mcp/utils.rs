@@ -1,4 +1,3 @@
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -95,30 +94,6 @@ pub async fn find_symbol_position_in_file(
         }
     }
     Err(format!("Symbol {symbol} not found in file {relative_file}"))
-}
-
-/// Returns the byte range (start, end) for a given line in a file
-/// The line number is 0-based
-/// Returns None if the line number is out of bounds
-fn get_line_byte_range(
-    file_path: impl AsRef<Path>,
-    line: u64,
-) -> std::io::Result<Option<Range<usize>>> {
-    let content = std::fs::read_to_string(file_path)?;
-    let mut current_line = 0;
-    let mut current_pos = 0;
-
-    for line_content in content.lines() {
-        if current_line == line {
-            let start = current_pos;
-            let end = current_pos + line_content.len();
-            return Ok(Some(Range { start, end }));
-        }
-        // +1 for the newline character
-        current_pos += line_content.len() + 1;
-        current_line += 1;
-    }
-    Ok(None)
 }
 
 /// Returns the lines between start_line and end_line (inclusive) from the given file path

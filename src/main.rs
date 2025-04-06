@@ -5,17 +5,12 @@ mod mcp;
 mod project;
 mod ui;
 
-use std::sync::Arc;
-use tracing_subscriber::prelude::*;
-
 use crate::ui::App;
 use anyhow::{Context, Result};
 use context::Context as ContextType;
-use lsp::RustAnalyzerLsp;
-use lsp_types::{HoverContents, MarkupContent, Position};
 use mcp::run_server;
 use project::Project;
-use tracing::{Level, info};
+use tracing::Level;
 use ui::apply_theme;
 
 #[tokio::main]
@@ -30,7 +25,7 @@ async fn main() -> Result<()> {
 
     let (sender, receiver) = flume::unbounded();
     let context = ContextType::new(4000, sender);
-    context.add_project(project).await?;
+    // context.add_project(project).await?;
 
     // Run the MCP Server
     let cloned_context = context.clone();

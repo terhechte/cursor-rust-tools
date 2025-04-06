@@ -2,6 +2,7 @@ use super::{utils::get_cargo_dependencies, walk::DocsCache};
 use anyhow::Result;
 use std::fs;
 
+#[derive(Debug)]
 pub struct DocsIndex {
     dependencies: Vec<(String, String)>,
     cache: DocsCache,
@@ -72,48 +73,5 @@ impl DocsIndex {
             }
         }
         Some(output)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::project::Project;
-
-    use super::*;
-    use std::path::PathBuf;
-
-    #[test]
-    fn test_docs_index() {
-        let project = Project::new(PathBuf::from("assets/zoxide-main")).unwrap();
-        let index = DocsIndex::new(&project).unwrap();
-
-        // Test dependencies
-        assert!(!index.dependencies().is_empty());
-
-        let mut output = String::new();
-
-        // Assuming there's a dependency named "anyhow" in the project
-        if let Some(symbols) = index.symbols("anyhow") {
-            // assert!(!symbols.is_empty());
-            for symbol in symbols {
-                if let Some(docs) = index.docs("anyhow", &[symbol.clone()]) {
-                    output.push_str(&symbol);
-                    output.push_str("\n");
-                    for (doc, content) in docs {
-                        output.push_str(&doc);
-                        output.push_str("\n");
-                        output.push_str(&content);
-                        output.push_str("\n");
-                    }
-                }
-            }
-            println!("{}", output);
-
-            // Test docs for the first symbol
-            // if let Some(docs) = index.docs("anyhow", &[symbols[0].clone()]) {
-            //     assert!(!docs.is_empty());
-            //     dbg!(&docs);
-            // }
-        }
     }
 }

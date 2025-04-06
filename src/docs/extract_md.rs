@@ -9,8 +9,7 @@ pub fn extract_md(html: &str) -> String {
     let html = re.replace(&html, "");
     let md = html2md::parse_html(&html);
     let md = extract_lines_after_package(&md);
-    let md = remove_backslashes(&remove_tags(&remove_markdown_links(&md)));
-    md
+    remove_backslashes(&remove_tags(&remove_markdown_links(&md)))
 }
 
 fn remove_markdown_links(input: &str) -> String {

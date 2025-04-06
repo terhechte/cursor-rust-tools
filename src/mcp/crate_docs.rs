@@ -5,7 +5,6 @@ use crate::{
     lsp::format_marked_string,
 };
 use anyhow::Result;
-use flume::Sender;
 use lsp_types::HoverContents;
 use mcp_core::{
     tools::ToolHandlerFn,
@@ -20,9 +19,9 @@ use super::{
     },
 };
 
-pub struct SymbolDocs;
+pub struct CrateDocs;
 
-impl SymbolDocs {
+impl CrateDocs {
     pub fn tool() -> Tool {
         Tool {
             name: "symbol_docs".to_string(),
@@ -48,28 +47,37 @@ impl SymbolDocs {
         }
     }
 
-    pub fn call(context: Context, notifier: Sender<McpNotification>) -> ToolHandlerFn {
+    pub fn call(context: Context) -> ToolHandlerFn {
         Box::new(move |request: CallToolRequest| {
             let clone = context.clone();
-            let notifier = notifier.clone();
             Box::pin(async move {
                 let (project, relative_file, absolute_file) =
                     match get_info_from_request(&clone, &request) {
                         Ok(info) => info,
                         Err(response) => return response,
                     };
-                notifier.send(McpNotification::Request {
-                    content: request.clone(),
-                    project: absolute_file.clone(),
-                });
+                if let Err(e) = clone
+                    .send_mcp_notification(McpNotification::Request {
+                        content: request.clone(),
+                        project: absolute_file.clone(),
+                    })
+                    .await
+                {
+                    tracing::error!("Failed to send MCP notification: {}", e);
+                }
                 let response = match handle_request(project, &relative_file, &request).await {
                     Ok(response) => response,
                     Err(response) => response,
                 };
-                notifier.send(McpNotification::Response {
-                    content: response.clone(),
-                    project: absolute_file.clone(),
-                });
+                if let Err(e) = clone
+                    .send_mcp_notification(McpNotification::Response {
+                        content: response.clone(),
+                        project: absolute_file.clone(),
+                    })
+                    .await
+                {
+                    tracing::error!("Failed to send MCP notification: {}", e);
+                }
                 response
             })
         })

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use super::extract_md::extract_md;
 use super::utils::{get_cargo_dependencies, parse_rust_symbol};
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 pub struct DocsCache {
     pub hash: String,
     pub deps: HashMap<String, HashMap<String, String>>,

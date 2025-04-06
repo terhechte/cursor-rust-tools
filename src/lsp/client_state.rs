@@ -32,16 +32,20 @@ impl LanguageClient for ClientState {
             ProgressParamsValue::WorkDone(WorkDoneProgress::End(_))
         );
         if is_indexing && !is_work_done {
-            self.notifier.send(LspNotification::Indexing {
+            if let Err(e) = self.notifier.send(LspNotification::Indexing {
                 project: self.project.clone(),
                 is_indexing: true,
-            });
+            }) {
+                tracing::error!("Failed to send indexing notification: {}", e);
+            }
         }
         if is_indexing && is_work_done {
-            self.notifier.send(LspNotification::Indexing {
+            if let Err(e) = self.notifier.send(LspNotification::Indexing {
                 project: self.project.clone(),
                 is_indexing: false,
-            });
+            }) {
+                tracing::error!("Failed to send indexing notification: {}", e);
+            }
 
             // Send a notification without consuming the sender
             if let Some(tx) = &self.indexed_tx {

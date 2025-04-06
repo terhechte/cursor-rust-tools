@@ -53,6 +53,10 @@ pub async fn run_server(context: Context) -> Result<()> {
             symbol_resolve::SymbolResolve::tool(),
             symbol_resolve::SymbolResolve::call(context.clone()),
         )
+        .register_tool(
+            crate_docs::CrateDocs::tool(),
+            crate_docs::CrateDocs::call(context.clone()),
+        )
         .build();
 
     match context.transport() {

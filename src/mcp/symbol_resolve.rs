@@ -51,18 +51,28 @@ impl SymbolResolve {
                         Ok(info) => info,
                         Err(response) => return response,
                     };
-                clone.send_mcp_notification(McpNotification::Request {
-                    content: request.clone(),
-                    project: absolute_file.clone(),
-                });
+                if let Err(e) = clone
+                    .send_mcp_notification(McpNotification::Request {
+                        content: request.clone(),
+                        project: absolute_file.clone(),
+                    })
+                    .await
+                {
+                    tracing::error!("Failed to send MCP notification: {}", e);
+                }
                 let response = match handle_request(project, &relative_file, &request).await {
                     Ok(response) => response,
                     Err(response) => response,
                 };
-                clone.send_mcp_notification(McpNotification::Response {
-                    content: response.clone(),
-                    project: absolute_file.clone(),
-                });
+                if let Err(e) = clone
+                    .send_mcp_notification(McpNotification::Response {
+                        content: response.clone(),
+                        project: absolute_file.clone(),
+                    })
+                    .await
+                {
+                    tracing::error!("Failed to send MCP notification: {}", e);
+                }
                 response
             })
         })
@@ -91,11 +101,12 @@ async fn handle_request(
     let keys = symbol_map.keys().map(|s| s.as_str()).collect::<Vec<_>>();
 
     let matches = get_top_n(&symbol, &keys, None, Some(1), None, None);
-    let Some(best_match) = matches.get(0) else {
+    let Some(best_match) = matches.first() else {
         return Err(error_response("No match for symbol found"));
     };
 
-    let Some(symbol_match) = symbol_map.get(&best_match.to_string()) else {
+    let match_str = best_match.to_string();
+    let Some(symbol_match) = symbol_map.get(&match_str) else {
         return Err(error_response("No match for symbol found"));
     };
 

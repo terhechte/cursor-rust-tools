@@ -53,18 +53,28 @@ impl SymbolReferences {
                         Ok(info) => info,
                         Err(response) => return response,
                     };
-                clone.send_mcp_notification(McpNotification::Request {
-                    content: request.clone(),
-                    project: absolute_file.clone(),
-                });
+                if let Err(e) = clone
+                    .send_mcp_notification(McpNotification::Request {
+                        content: request.clone(),
+                        project: absolute_file.clone(),
+                    })
+                    .await
+                {
+                    tracing::error!("Failed to send MCP notification: {}", e);
+                }
                 let response = match handle_request(project, &relative_file, &request).await {
                     Ok(response) => response,
                     Err(response) => response,
                 };
-                clone.send_mcp_notification(McpNotification::Response {
-                    content: response.clone(),
-                    project: absolute_file.clone(),
-                });
+                if let Err(e) = clone
+                    .send_mcp_notification(McpNotification::Response {
+                        content: response.clone(),
+                        project: absolute_file.clone(),
+                    })
+                    .await
+                {
+                    tracing::error!("Failed to send MCP notification: {}", e);
+                }
                 response
             })
         })

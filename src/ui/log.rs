@@ -4,7 +4,6 @@ use std::{
     fmt,
     sync::{Arc, RwLock},
 };
-use tracing::level_filters::LevelFilter;
 
 use tracing_subscriber::layer::Layer;
 

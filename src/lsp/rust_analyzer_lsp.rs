@@ -21,12 +21,12 @@ use tokio::task::JoinHandle;
 use tower::ServiceBuilder;
 use tracing::info;
 
-use super::Stop;
 use super::client_state::ClientState;
 use crate::lsp::LspNotification;
 use crate::project::Project;
 use flume::Sender;
 
+#[derive(Debug)]
 pub struct RustAnalyzerLsp {
     project: Project,
     server: Mutex<ServerSocket>,
@@ -108,7 +108,6 @@ impl RustAnalyzerLsp {
                     })),
                     ..ClientCapabilities::default()
                 },
-                // process_id: Some(process.id()), // Not strictly necessary but good practice
                 ..InitializeParams::default()
             })
             .await
@@ -123,14 +122,12 @@ impl RustAnalyzerLsp {
             .context("Sending Initialized notification failed")?;
 
         info!("Waiting for rust-analyzer indexing...");
-        client
-            .indexed_rx
-            .lock()
-            .await
-            .recv_async()
-            .await
-            .context("Failed waiting for index")?;
-        info!("rust-analyzer indexing finished.");
+        let rx = client.indexed_rx.lock().await.clone();
+        tokio::spawn(async move {
+            while let Ok(()) = rx.recv_async().await {
+                info!("rust-analyzer indexing finished.");
+            }
+        });
 
         Ok(client)
     }
@@ -247,21 +244,5 @@ impl RustAnalyzerLsp {
                 }
             });
         Ok(o)
-    }
-
-    pub async fn shutdown(self) -> Result<()> {
-        info!("Shutting down LSP server...");
-        let mut server = self.server.into_inner();
-        server.shutdown(()).await.context("LSP shutdown failed")?;
-        info!("Sending exit notification...");
-        server
-            .exit(())
-            .context("Sending Exit notification failed")?;
-        // Emit Stop to break the client loop.
-        server.emit(Stop)?;
-        // Wait for the mainloop task to finish
-        self.mainloop_handle.await.context("Mainloop task failed")?;
-        info!("LSP client shut down successfully.");
-        Ok(())
     }
 }
