@@ -6,6 +6,7 @@ use std::sync::{Arc, RwLock, RwLockWriteGuard};
 use crate::docs::{Docs, DocsNotification};
 use crate::lsp::LspNotification;
 use crate::mcp::McpNotification;
+use crate::ui::ProjectDescription;
 use crate::{
     lsp::RustAnalyzerLsp,
     project::{Project, TransportType},
@@ -79,6 +80,32 @@ impl Context {
             docs_sender,
             mcp_sender,
         }
+    }
+
+    pub fn project_descriptions(&self) -> Vec<ProjectDescription> {
+        let projects_map = self
+            .projects
+            .read()
+            .expect("Failed to acquire read lock on projects");
+        projects_map
+            .values()
+            .map(|project| ProjectDescription {
+                root: project.project.root().clone(),
+                name: project
+                    .project
+                    .root()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string(),
+                is_indexing_lsp: project
+                    .is_indexing_lsp
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                is_indexing_docs: project
+                    .is_indexing_docs
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            })
+            .collect()
     }
 
     pub fn transport(&self) -> &TransportType {

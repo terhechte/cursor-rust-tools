@@ -29,3 +29,6 @@ toml = "0.8.20"
 sha2 = "0.10.8"
 ignore = "0.4.23"
 html2md = "0.2.15"
+egui = "0.28.1"
+eframe = "0.28.1"
+egui-aesthetix = { version = "0.2.4", features = ["all_themes"] }

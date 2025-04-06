@@ -141,10 +141,6 @@ pub fn get_file_lines(
     let mut start = start_line.saturating_sub(prefix as u32);
     let mut end = end_line.saturating_add(suffix as u32);
 
-    if start < 0 {
-        start = 0;
-    }
-
     if end > lines.len() as u32 {
         end = lines.len() as u32;
     }

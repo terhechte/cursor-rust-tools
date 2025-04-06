@@ -1,3 +1,4 @@
+mod crate_docs;
 mod symbol_docs;
 mod symbol_impl;
 mod symbol_references;
