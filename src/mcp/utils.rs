@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::context::{Context, ProjectContext};
 use anyhow::Result;
-use lsp_types::{MarkedString, Position};
+use lsp_types::Position;
 use mcp_core::types::{CallToolRequest, CallToolResponse, ToolResponseContent};
 
 pub fn error_response(message: &str) -> CallToolResponse {

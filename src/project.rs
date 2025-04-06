@@ -12,17 +12,20 @@ pub enum TransportType {
 #[derive(Clone)]
 pub struct Project {
     root: PathBuf,
-    transport: TransportType,
+    ignore_crates: Vec<String>,
 }
 
 impl Project {
-    pub fn new(root: impl AsRef<Path>, transport: TransportType) -> Result<Self> {
+    pub fn new(root: impl AsRef<Path>) -> Result<Self> {
         let root = root.as_ref().canonicalize()?;
-        Ok(Self { root, transport })
+        Ok(Self {
+            root,
+            ignore_crates: vec![],
+        })
     }
 
-    pub fn transport(&self) -> &TransportType {
-        &self.transport
+    pub fn ignore_crates(&self) -> &[String] {
+        &self.ignore_crates
     }
 
     pub fn root(&self) -> &PathBuf {
@@ -32,6 +35,18 @@ impl Project {
     pub fn uri(&self) -> Result<Url> {
         Url::from_file_path(&self.root)
             .map_err(|_| anyhow::anyhow!("Failed to create project root URI"))
+    }
+
+    pub fn docs_dir(&self) -> PathBuf {
+        self.cache_dir().join("doc")
+    }
+
+    pub fn cache_folder(&self) -> &str {
+        ".docs-cache"
+    }
+
+    pub fn cache_dir(&self) -> PathBuf {
+        self.root.join(self.cache_folder())
     }
 
     pub fn file_uri(&self, relative_path: impl AsRef<Path>) -> Result<Url> {

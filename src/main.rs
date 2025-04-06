@@ -1,4 +1,5 @@
 mod context;
+mod docs;
 mod lsp;
 mod mcp;
 mod project;
