@@ -13,7 +13,10 @@ use mcp_core::{
 };
 use serde_json::json;
 
-use super::utils::{RequestExtension, error_response, get_info_from_request};
+use super::{
+    McpNotification,
+    utils::{RequestExtension, error_response, get_info_from_request},
+};
 
 pub struct SymbolResolve;
 
@@ -43,14 +46,24 @@ impl SymbolResolve {
         Box::new(move |request: CallToolRequest| {
             let clone = context.clone();
             Box::pin(async move {
-                let (project, relative_file, _) = match get_info_from_request(&clone, &request) {
-                    Ok(info) => info,
-                    Err(response) => return response,
-                };
-                match handle_request(project, &relative_file, &request).await {
+                let (project, relative_file, absolute_file) =
+                    match get_info_from_request(&clone, &request) {
+                        Ok(info) => info,
+                        Err(response) => return response,
+                    };
+                clone.send_mcp_notification(McpNotification::Request {
+                    content: request.clone(),
+                    project: absolute_file.clone(),
+                });
+                let response = match handle_request(project, &relative_file, &request).await {
                     Ok(response) => response,
                     Err(response) => response,
-                }
+                };
+                clone.send_mcp_notification(McpNotification::Response {
+                    content: response.clone(),
+                    project: absolute_file.clone(),
+                });
+                response
             })
         })
     }

@@ -4,12 +4,9 @@ mod symbol_references;
 mod symbol_resolve;
 mod utils;
 
-use std::path::PathBuf;
-
 use crate::context::Context;
 use crate::project::TransportType;
 use anyhow::Result;
-use flume::Sender;
 use mcp_core::{
     server::Server,
     transport::{ServerSseTransport, ServerStdioTransport},
@@ -17,6 +14,7 @@ use mcp_core::{
 };
 use serde_json::json;
 
+#[derive(Debug, Clone)]
 pub(super) enum McpNotification {
     Request {
         content: CallToolRequest,
@@ -28,7 +26,7 @@ pub(super) enum McpNotification {
     },
 }
 
-pub async fn run_server(context: Context, notifier: Sender<McpNotification>) -> Result<()> {
+pub async fn run_server(context: Context) -> Result<()> {
     let server_protocol = Server::builder("cursor-rust-tools".to_string(), "1.0".to_string())
         .capabilities(ServerCapabilities {
             tools: Some(json!({
@@ -38,7 +36,7 @@ pub async fn run_server(context: Context, notifier: Sender<McpNotification>) -> 
         })
         .register_tool(
             symbol_docs::SymbolDocs::tool(),
-            symbol_docs::SymbolDocs::call(context.clone(), notifier.clone()),
+            symbol_docs::SymbolDocs::call(context.clone()),
         )
         .register_tool(
             symbol_impl::SymbolImpl::tool(),

@@ -1,33 +1,83 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, RwLock, RwLockWriteGuard};
 
+use crate::docs::{Docs, DocsNotification};
+use crate::lsp::LspNotification;
+use crate::mcp::McpNotification;
 use crate::{
     lsp::RustAnalyzerLsp,
     project::{Project, TransportType},
 };
 use anyhow::Result;
+use flume::Sender;
 
-/// Holds a project and its associated LSP instance
+pub enum ContextNotification {
+    Lsp(LspNotification),
+    Docs(DocsNotification),
+    Mcp(McpNotification),
+}
+
 pub struct ProjectContext {
     pub project: Project,
     pub lsp: RustAnalyzerLsp,
+    pub docs: Docs,
+    pub is_indexing_lsp: AtomicBool,
+    pub is_indexing_docs: AtomicBool,
 }
 
 #[derive(Clone)]
 pub struct Context {
     projects: Arc<RwLock<HashMap<PathBuf, Arc<ProjectContext>>>>,
     transport: TransportType,
+    lsp_sender: Sender<LspNotification>,
+    docs_sender: Sender<DocsNotification>,
+    mcp_sender: Sender<McpNotification>,
 }
 
 impl Context {
-    pub fn new() -> Self {
+    pub fn new(port: u16, notifier: Sender<ContextNotification>) -> Self {
+        let (lsp_sender, lsp_receiver) = flume::unbounded();
+        let (docs_sender, docs_receiver) = flume::unbounded();
+        let (mcp_sender, mcp_receiver) = flume::unbounded();
+
+        let projects = Arc::new(RwLock::new(HashMap::new()));
+
+        let cloned_projects = projects.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    Ok(notification) = mcp_receiver.recv_async() => {
+                        notifier.send(ContextNotification::Mcp(notification));
+                    }
+                    Ok(ref notification @ DocsNotification::Indexing { ref project, is_indexing }) = docs_receiver.recv_async() => {
+                        notifier.send(ContextNotification::Docs(notification.clone()));
+                        let mut projects: RwLockWriteGuard<'_, HashMap<PathBuf, Arc<ProjectContext>>> = cloned_projects.write().unwrap();
+                        if let Some(project) = projects.get_mut(project) {
+                            project.is_indexing_docs.store(is_indexing, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                    Ok(ref notification @ LspNotification::Indexing { ref project, is_indexing }) = lsp_receiver.recv_async() => {
+                        notifier.send(ContextNotification::Lsp(notification.clone()));
+                        let mut projects: RwLockWriteGuard<'_, HashMap<PathBuf, Arc<ProjectContext>>> = cloned_projects.write().unwrap();
+                        if let Some(project) = projects.get_mut(project) {
+                            project.is_indexing_lsp.store(is_indexing, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                }
+            }
+        });
+
         Self {
-            projects: Arc::new(RwLock::new(HashMap::new())),
+            projects,
             transport: TransportType::Sse {
                 host: "localhost".to_string(),
-                port: 8080,
+                port,
             },
+            lsp_sender,
+            docs_sender,
+            mcp_sender,
         }
     }
 
@@ -35,11 +85,23 @@ impl Context {
         &self.transport
     }
 
+    pub async fn send_mcp_notification(&self, notification: McpNotification) -> Result<()> {
+        self.mcp_sender.send(notification)?;
+        Ok(())
+    }
+
     /// Add a new project to the context
-    pub async fn add_project(&mut self, project: Project) -> Result<()> {
+    pub async fn add_project(&self, project: Project) -> Result<()> {
         let root = project.root().clone();
-        let lsp = RustAnalyzerLsp::new(&project).await?;
-        let project_context = Arc::new(ProjectContext { project, lsp });
+        let lsp = RustAnalyzerLsp::new(&project, self.lsp_sender.clone()).await?;
+        let docs = Docs::new(project.clone(), self.docs_sender.clone())?;
+        let project_context = Arc::new(ProjectContext {
+            project,
+            lsp,
+            docs,
+            is_indexing_lsp: AtomicBool::new(false),
+            is_indexing_docs: AtomicBool::new(false),
+        });
 
         let mut projects_map = self
             .projects

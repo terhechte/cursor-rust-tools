@@ -1,7 +1,12 @@
 use std::sync::Arc;
 
-use crate::context::{Context, ProjectContext};
+use crate::{
+    context::{Context, ProjectContext},
+    lsp::format_marked_string,
+};
 use anyhow::Result;
+use flume::Sender;
+use lsp_types::HoverContents;
 use mcp_core::{
     tools::ToolHandlerFn,
     types::{CallToolRequest, CallToolResponse, Tool, ToolResponseContent},
@@ -11,18 +16,17 @@ use serde_json::json;
 use super::{
     McpNotification,
     utils::{
-        RequestExtension, error_response, find_symbol_position_in_file, get_file_lines,
-        get_info_from_request,
+        RequestExtension, error_response, find_symbol_position_in_file, get_info_from_request,
     },
 };
 
-pub struct SymbolReferences;
+pub struct SymbolDocs;
 
-impl SymbolReferences {
+impl SymbolDocs {
     pub fn tool() -> Tool {
         Tool {
-            name: "symbol_references".to_string(),
-            description: Some("Get all the references for a symbol. Will return a list of files that contain the symbol including a preview of the usage.".to_string()),
+            name: "symbol_docs".to_string(),
+            description: Some("Get the documentation for a symbol".to_string()),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -44,16 +48,17 @@ impl SymbolReferences {
         }
     }
 
-    pub fn call(context: Context) -> ToolHandlerFn {
+    pub fn call(context: Context, notifier: Sender<McpNotification>) -> ToolHandlerFn {
         Box::new(move |request: CallToolRequest| {
             let clone = context.clone();
+            let notifier = notifier.clone();
             Box::pin(async move {
                 let (project, relative_file, absolute_file) =
                     match get_info_from_request(&clone, &request) {
                         Ok(info) => info,
                         Err(response) => return response,
                     };
-                clone.send_mcp_notification(McpNotification::Request {
+                notifier.send(McpNotification::Request {
                     content: request.clone(),
                     project: absolute_file.clone(),
                 });
@@ -61,7 +66,7 @@ impl SymbolReferences {
                     Ok(response) => response,
                     Err(response) => response,
                 };
-                clone.send_mcp_notification(McpNotification::Response {
+                notifier.send(McpNotification::Response {
                     content: response.clone(),
                     project: absolute_file.clone(),
                 });
@@ -83,31 +88,27 @@ async fn handle_request(
         .await
         .map_err(|e| error_response(&e))?;
 
-    let Some(references) = project
+    let Some(hover) = project
         .lsp
-        .find_references(relative_file, position)
+        .hover(relative_file, position)
         .await
         .map_err(|e| error_response(&e.to_string()))?
     else {
-        return Err(error_response("No references found"));
+        return Err(error_response("No hover information found"));
     };
 
-    let mut contents = String::new();
-    for reference in references {
-        let Ok(Some(lines)) = get_file_lines(
-            reference.uri.path(),
-            reference.range.start.line,
-            reference.range.end.line,
-            4,
-            4,
-        ) else {
-            continue;
-        };
-        contents.push_str(&format!("## {}\n```\n{}\n```\n", reference.uri, lines));
-    }
+    let response = match hover.contents {
+        HoverContents::Scalar(s) => format_marked_string(&s),
+        HoverContents::Array(a) => a
+            .into_iter()
+            .map(|s| format_marked_string(&s))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        HoverContents::Markup(m) => m.value,
+    };
 
     Ok(CallToolResponse {
-        content: vec![ToolResponseContent::Text { text: contents }],
+        content: vec![ToolResponseContent::Text { text: response }],
         is_error: None,
         meta: None,
     })

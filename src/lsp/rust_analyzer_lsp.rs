@@ -23,7 +23,9 @@ use tracing::info;
 
 use super::Stop;
 use super::client_state::ClientState;
+use crate::lsp::LspNotification;
 use crate::project::Project;
+use flume::Sender;
 
 pub struct RustAnalyzerLsp {
     project: Project,
@@ -34,27 +36,26 @@ pub struct RustAnalyzerLsp {
 }
 
 impl RustAnalyzerLsp {
-    pub async fn new(project: &Project) -> Result<Self> {
+    pub async fn new(project: &Project, notifier: Sender<LspNotification>) -> Result<Self> {
         let (indexed_tx, indexed_rx) = flume::unbounded();
         let (mainloop, server) = async_lsp::MainLoop::new_client(|_server| {
             ServiceBuilder::new()
                 .layer(TracingLayer::default())
                 .layer(LifecycleLayer::default()) // Handle init/shutdown automatically
                 .layer(CatchUnwindLayer::default())
-                // .layer(ClientProcessMonitorLayer::new(async {
-                //     // Keep the connection alive until shutdown explicitly
-                //     futures::future::pending::<()>().await;
-                // }))
                 .layer(ConcurrencyLayer::default())
-                .service(ClientState::new_router(indexed_tx))
+                .service(ClientState::new_router(
+                    indexed_tx,
+                    notifier,
+                    project.root().to_path_buf(),
+                ))
         });
 
         let process = async_process::Command::new("rust-analyzer")
             .current_dir(project.root())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit()) // Keep stderr for debugging RA crashes
-            // .kill_on_drop(true)
+            .stderr(Stdio::inherit())
             .spawn()
             .context("Failed run rust-analyzer")?;
 
