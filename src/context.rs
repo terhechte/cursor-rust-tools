@@ -43,6 +43,9 @@ impl ContextNotification {
     }
 }
 
+const HOSTNAME: &str = "localhost";
+const CONFIGURATION_FILE: &str = ".cursor-rust-tools";
+
 #[derive(Debug)]
 pub struct ProjectContext {
     pub project: Project,
@@ -105,7 +108,7 @@ impl Context {
         Self {
             projects,
             transport: TransportType::Sse {
-                host: "localhost".to_string(),
+                host: HOSTNAME.to_string(),
                 port,
             },
             lsp_sender,
@@ -113,6 +116,24 @@ impl Context {
             mcp_sender,
             notifier,
         }
+    }
+
+    pub fn address_information(&self) -> (String, u16) {
+        match &self.transport {
+            TransportType::Stdio => ("stdio".to_string(), 0),
+            TransportType::Sse { host, port } => (host.clone(), *port),
+        }
+    }
+
+    pub fn mcp_configuration(&self) -> String {
+        let (host, port) = self.address_information();
+        CONFIG_TEMPLATE
+            .replace("{{HOST}}", &host)
+            .replace("{{PORT}}", &port.to_string())
+    }
+
+    pub fn configuration_file(&self) -> String {
+        format!("~/{}", CONFIGURATION_FILE)
     }
 
     pub fn project_descriptions(&self) -> Vec<ProjectDescription> {
@@ -237,3 +258,16 @@ impl Context {
         Ok(())
     }
 }
+
+const CONFIG_TEMPLATE: &str = r#"
+{
+    "mcpServers": {
+        "server-name": {
+            "url": "http://{{HOST}}:{{PORT}}/sse",
+            "env": {
+                "API_KEY": ""
+            }
+        }
+    }
+}
+"#;

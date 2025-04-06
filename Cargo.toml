@@ -35,3 +35,5 @@ eframe = "0.31"
 lazy_static = "1.5.0"
 egui-aesthetix = { git = "https://github.com/thebashpotato/egui-aesthetix", features = ["all_themes"]}
 rfd = "0.15.3"
+open = "5"
+pathexpand = "0.1.1"

@@ -1,6 +1,10 @@
+use open;
 use std::{collections::HashMap, path::PathBuf};
 
-use egui::{CentralPanel, Context as EguiContext, ScrollArea, SidePanel, TopBottomPanel, Ui};
+use egui::{
+    CentralPanel, Color32, Context as EguiContext, Frame, RichText, ScrollArea, SidePanel,
+    TopBottomPanel, Ui,
+};
 use flume::Receiver;
 
 use crate::{
@@ -19,12 +23,19 @@ pub struct ProjectDescription {
     pub is_indexing_docs: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum SidebarTab {
+    Projects,
+    Info,
+}
+
 pub struct App {
     context: Context,
     receiver: Receiver<ContextNotification>,
     selected_project: Option<PathBuf>,
     logs: Vec<String>,
     events: HashMap<String, Vec<ContextNotification>>,
+    selected_sidebar_tab: SidebarTab,
 }
 
 impl App {
@@ -33,8 +44,9 @@ impl App {
             context,
             receiver,
             selected_project: None,
-            logs: vec!["Log line 1".to_string(), "Log line 2".to_string()],
+            logs: Vec::new(),
             events: HashMap::new(),
+            selected_sidebar_tab: SidebarTab::Projects,
         }
     }
 
@@ -50,29 +62,41 @@ impl App {
     }
 
     fn draw_left_sidebar(&mut self, ui: &mut Ui, project_descriptions: &[ProjectDescription]) {
-        ui.heading("Projects");
+        ui.columns(2, |columns| {
+            columns[0].selectable_value(
+                &mut self.selected_sidebar_tab,
+                SidebarTab::Projects,
+                "Projects",
+            );
+            columns[1].selectable_value(&mut self.selected_sidebar_tab, SidebarTab::Info, "Info");
+        });
 
-        ui.separator();
+        match self.selected_sidebar_tab {
+            SidebarTab::Projects => {
+                self.draw_projects_tab(ui, project_descriptions);
+            }
+            SidebarTab::Info => {
+                self.draw_info_tab(ui);
+            }
+        }
+    }
 
+    fn draw_projects_tab(&mut self, ui: &mut Ui, project_descriptions: &[ProjectDescription]) {
         ScrollArea::vertical().show(ui, |ui| {
             let selected_path = self.selected_project.clone();
             for project in project_descriptions {
                 let is_spinning = project.is_indexing_lsp || project.is_indexing_docs;
                 let is_selected = selected_path.as_ref() == Some(&project.root);
-                ui.horizontal(|ui| {
-                    if ui.selectable_label(is_selected, &project.name).clicked() {
-                        self.selected_project = Some(project.root.clone());
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if is_spinning {
-                            ui.add(egui::Spinner::new());
-                        }
-                    });
-                });
+
+                let cell = ListCell::new(&project.name, is_selected, is_spinning);
+                let response = cell.show(ui);
+
+                if response.clicked() {
+                    self.selected_project = Some(project.root.clone());
+                    ui.ctx().request_repaint();
+                }
             }
         });
-
-        ui.separator();
 
         ui.vertical_centered_justified(|ui| {
             if ui.button("Add Project").clicked() {
@@ -108,6 +132,35 @@ impl App {
                     ));
                 }
             }
+        });
+    }
+
+    fn draw_info_tab(&mut self, ui: &mut Ui) {
+        let (host, port) = self.context.address_information();
+        let config_file = self.context.configuration_file();
+        // TODO: Replace placeholders with actual data and functionality
+        ui.label(format!("Address: {}", host));
+        ui.label(format!("Port: {}", port));
+
+        ui.add_space(10.0);
+
+        ui.vertical_centered_justified(|ui| {
+            if ui.button("Copy MCP JSON").clicked() {
+                let config = self.context.mcp_configuration();
+                ui.output_mut(|o| o.copied_text = config);
+            }
+            ui.small("Place this in your .cursor/mcp.json file");
+
+            if ui.button("Open Conf").clicked() {
+                open::that("/Users/terhechte/Desktop");
+            }
+            if ui.button("Copy Conf Path").clicked() {
+                if let Some(expanded_path) = pathexpand::expand(&config_file) {
+                    ui.output_mut(|o| o.copied_text = expanded_path.to_string_lossy().to_string());
+                }
+            }
+            ui.small(&config_file);
+            ui.small("To manually edit projects");
         });
     }
 
@@ -218,7 +271,13 @@ impl eframe::App for App {
         self.handle_notifications();
         let project_descriptions = self.context.project_descriptions();
 
+        let sidebar_frame = egui::Frame {
+            fill: egui::Color32::from_rgb(32, 32, 32), // Darker background
+            ..egui::Frame::side_top_panel(&ctx.style())
+        };
+
         SidePanel::left("left_sidebar")
+            .frame(sidebar_frame)
             .resizable(true)
             .default_width(200.0)
             .show(ctx, |ui| {
@@ -239,5 +298,83 @@ impl eframe::App for App {
         if !self.receiver.is_empty() {
             ctx.request_repaint();
         }
+    }
+}
+
+struct ListCell<'a> {
+    text: &'a str,
+    is_selected: bool,
+    is_spinning: bool,
+}
+
+impl<'a> ListCell<'a> {
+    /// Creates a new ListCell.
+    fn new(text: &'a str, is_selected: bool, is_spinning: bool) -> Self {
+        Self {
+            text,
+            is_selected,
+            is_spinning,
+        }
+    }
+
+    /// Draws the ListCell and returns the interaction response.
+    fn show(self, ui: &mut Ui) -> egui::Response {
+        // Calculate desired size (full width, standard height + padding)
+        let desired_size = egui::vec2(
+            ui.available_width(),
+            ui.text_style_height(&egui::TextStyle::Body) + 2.0 * ui.style().spacing.item_spacing.y,
+        );
+        // Allocate space and sense clicks for the entire row
+        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+
+        // Draw background highlight if selected or hovered
+        let bg_fill = if self.is_selected {
+            ui.style().visuals.selection.bg_fill
+        } else if response.hovered() {
+            ui.style().visuals.widgets.hovered.bg_fill
+        } else {
+            Color32::TRANSPARENT
+        };
+
+        if bg_fill != Color32::TRANSPARENT {
+            ui.painter().rect_filled(
+                rect.expand(ui.style().spacing.item_spacing.x / 2.0),
+                0, // No rounding
+                bg_fill,
+            );
+        }
+
+        // Draw the content (label and spinner) within the allocated rectangle
+        let content_rect = rect.shrink(ui.style().spacing.item_spacing.x); // Add horizontal padding
+        let mut content_ui = ui.child_ui(
+            content_rect,
+            egui::Layout::left_to_right(egui::Align::Center),
+            None,
+        );
+
+        content_ui.horizontal(|ui| {
+            // Use a simple label, adjust text color if selected
+            let text_color = if self.is_selected {
+                ui.style().visuals.strong_text_color()
+            } else {
+                ui.style().visuals.text_color()
+            };
+
+            // Create a Label widget and set its sense to Hover only,
+            // so it doesn't steal clicks from the parent response.
+            let label = egui::Label::new(RichText::new(self.text).color(text_color))
+                .sense(egui::Sense::hover());
+            ui.add(label);
+
+            // Align spinner to the right
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.is_spinning {
+                    // Use the same text_color for the spinner for consistency
+                    ui.add(egui::Spinner::new().color(text_color));
+                }
+            });
+        });
+
+        response
     }
 }
