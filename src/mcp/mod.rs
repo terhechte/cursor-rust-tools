@@ -13,13 +13,19 @@ use flume::Sender;
 use mcp_core::{
     server::Server,
     transport::{ServerSseTransport, ServerStdioTransport},
-    types::ServerCapabilities,
+    types::{CallToolRequest, CallToolResponse, ServerCapabilities},
 };
 use serde_json::json;
 
-enum McpNotification {
-    Request { content: String, project: PathBuf },
-    Response { content: String, project: PathBuf },
+pub(super) enum McpNotification {
+    Request {
+        content: CallToolRequest,
+        project: String,
+    },
+    Response {
+        content: CallToolResponse,
+        project: String,
+    },
 }
 
 pub async fn run_server(context: Context, notifier: Sender<McpNotification>) -> Result<()> {
@@ -32,7 +38,7 @@ pub async fn run_server(context: Context, notifier: Sender<McpNotification>) -> 
         })
         .register_tool(
             symbol_docs::SymbolDocs::tool(),
-            symbol_docs::SymbolDocs::call(context.clone()),
+            symbol_docs::SymbolDocs::call(context.clone(), notifier.clone()),
         )
         .register_tool(
             symbol_impl::SymbolImpl::tool(),

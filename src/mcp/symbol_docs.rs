@@ -5,6 +5,7 @@ use crate::{
     lsp::format_marked_string,
 };
 use anyhow::Result;
+use flume::Sender;
 use lsp_types::HoverContents;
 use mcp_core::{
     tools::ToolHandlerFn,
@@ -12,8 +13,11 @@ use mcp_core::{
 };
 use serde_json::json;
 
-use super::utils::{
-    RequestExtension, error_response, find_symbol_position_in_file, get_info_from_request,
+use super::{
+    McpNotification,
+    utils::{
+        RequestExtension, error_response, find_symbol_position_in_file, get_info_from_request,
+    },
 };
 
 pub struct SymbolDocs;
@@ -44,18 +48,29 @@ impl SymbolDocs {
         }
     }
 
-    pub fn call(context: Context) -> ToolHandlerFn {
+    pub fn call(context: Context, notifier: Sender<McpNotification>) -> ToolHandlerFn {
         Box::new(move |request: CallToolRequest| {
             let clone = context.clone();
+            let notifier = notifier.clone();
             Box::pin(async move {
-                let (project, relative_file, _) = match get_info_from_request(&clone, &request) {
-                    Ok(info) => info,
-                    Err(response) => return response,
-                };
-                match handle_request(project, &relative_file, &request).await {
+                let (project, relative_file, absolute_file) =
+                    match get_info_from_request(&clone, &request) {
+                        Ok(info) => info,
+                        Err(response) => return response,
+                    };
+                notifier.send(McpNotification::Request {
+                    content: request.clone(),
+                    project: absolute_file.clone(),
+                });
+                let response = match handle_request(project, &relative_file, &request).await {
                     Ok(response) => response,
                     Err(response) => response,
-                }
+                };
+                notifier.send(McpNotification::Response {
+                    content: response.clone(),
+                    project: absolute_file.clone(),
+                });
+                response
             })
         })
     }
