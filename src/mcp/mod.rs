@@ -5,6 +5,8 @@ mod symbol_references;
 mod symbol_resolve;
 mod utils;
 
+use std::path::PathBuf;
+
 use crate::context::Context;
 use crate::project::TransportType;
 use anyhow::Result;
@@ -19,11 +21,11 @@ use serde_json::json;
 pub(super) enum McpNotification {
     Request {
         content: CallToolRequest,
-        project: String,
+        project: PathBuf,
     },
     Response {
         content: CallToolResponse,
-        project: String,
+        project: PathBuf,
     },
 }
 

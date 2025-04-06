@@ -11,8 +11,8 @@ pub enum TransportType {
 
 #[derive(Clone)]
 pub struct Project {
-    root: PathBuf,
-    ignore_crates: Vec<String>,
+    pub root: PathBuf,
+    pub ignore_crates: Vec<String>,
 }
 
 impl Project {

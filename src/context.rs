@@ -20,6 +20,24 @@ pub enum ContextNotification {
     Mcp(McpNotification),
 }
 
+impl ContextNotification {
+    pub fn project_name(&self) -> String {
+        let project_path = match self {
+            ContextNotification::Lsp(LspNotification::Indexing { project, .. }) => project.clone(),
+            ContextNotification::Docs(DocsNotification::Indexing { project, .. }) => {
+                project.clone()
+            }
+            ContextNotification::Mcp(McpNotification::Request { project, .. }) => project.clone(),
+            ContextNotification::Mcp(McpNotification::Response { project, .. }) => project.clone(),
+        };
+        project_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string()
+    }
+}
+
 pub struct ProjectContext {
     pub project: Project,
     pub lsp: RustAnalyzerLsp,
@@ -179,5 +197,11 @@ impl Context {
         }
 
         None
+    }
+
+    pub async fn force_index_docs(&self, project: &PathBuf) -> Result<()> {
+        let project_context = self.get_project(project).unwrap();
+        project_context.docs.update_index().await?;
+        Ok(())
     }
 }

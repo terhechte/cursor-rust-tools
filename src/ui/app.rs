@@ -1,9 +1,15 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use egui::{CentralPanel, Context as EguiContext, ScrollArea, SidePanel, TopBottomPanel, Ui, Vec2};
+use egui_file_dialog::{DialogState, FileDialog};
 use flume::Receiver;
+use tokio;
 
-use crate::context::{Context, ContextNotification};
+use crate::{
+    context::{Context, ContextNotification},
+    lsp::LspNotification,
+    project::Project,
+};
 
 #[derive(Clone, Debug)]
 pub struct ProjectDescription {
@@ -19,6 +25,8 @@ pub struct App {
     selected_project: Option<PathBuf>,
     project_descriptions: Vec<ProjectDescription>,
     logs: Vec<String>,
+    events: HashMap<String, Vec<ContextNotification>>,
+    file_dialog: FileDialog,
 }
 
 impl App {
@@ -30,44 +38,18 @@ impl App {
             selected_project: None,
             project_descriptions,
             logs: vec!["Log line 1".to_string(), "Log line 2".to_string()],
+            events: HashMap::new(),
+            file_dialog: FileDialog::new(),
         }
     }
 
     fn handle_notifications(&mut self) {
         while let Ok(notification) = self.receiver.try_recv() {
-            match notification {
-                ContextNotification::Lsp(lsp_notification) => (),
-                ContextNotification::Docs(docs_notification) => (),
-                ContextNotification::Mcp(mcp_notification) => (),
-                // ContextNotification::ProjectListChanged => {
-                //     self.project_descriptions = self.context.project_descriptions();
-                //     if let Some(selected) = &self.selected_project {
-                //         if !self
-                //             .project_descriptions
-                //             .iter()
-                //             .any(|p| p.root == *selected)
-                //         {
-                //             self.selected_project = None;
-                //         }
-                //     }
-                // }
-                // ContextNotification::Log(message) => {
-                //     self.logs.push(message);
-                //     if self.logs.len() > 1000 {
-                //         self.logs.remove(0);
-                //     }
-                // }
-                // ContextNotification::IndexingStatusChanged(root, is_lsp, is_docs) => {
-                //     if let Some(proj) = self
-                //         .project_descriptions
-                //         .iter_mut()
-                //         .find(|p| p.root == root)
-                //     {
-                //         proj.is_indexing_lsp = is_lsp;
-                //         proj.is_indexing_docs = is_docs;
-                //     }
-                // }
-            }
+            let project_name = notification.project_name();
+            self.events
+                .entry(project_name)
+                .or_default()
+                .push(notification);
         }
     }
 
@@ -79,10 +61,18 @@ impl App {
         ScrollArea::vertical().show(ui, |ui| {
             let selected_path = self.selected_project.clone();
             for project in &self.project_descriptions {
+                let is_spinning = project.is_indexing_lsp || project.is_indexing_docs;
                 let is_selected = selected_path.as_ref() == Some(&project.root);
-                if ui.selectable_label(is_selected, &project.name).clicked() {
-                    self.selected_project = Some(project.root.clone());
-                }
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(is_selected, &project.name).clicked() {
+                        self.selected_project = Some(project.root.clone());
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if is_spinning {
+                            ui.add(egui::Spinner::new());
+                        }
+                    });
+                });
             }
         });
 
@@ -90,8 +80,29 @@ impl App {
 
         ui.vertical_centered_justified(|ui| {
             if ui.button("Add Project").clicked() {
-                self.logs
-                    .push("Add Project clicked (modal not implemented)".to_string());
+                self.file_dialog.pick_directory();
+            }
+
+            self.file_dialog.update(ui.ctx());
+
+            if let Some(path) = self.file_dialog.take_picked() {
+                let path_buf = path.to_path_buf();
+                tracing::info!("Adding project: {:?}", path_buf);
+
+                let context = self.context.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = context
+                        .add_project(Project {
+                            root: path_buf,
+                            ignore_crates: vec![],
+                        })
+                        .await
+                    {
+                        tracing::error!("Failed to add project: {}", e);
+                    } else {
+                        tracing::info!("Project added successfully.");
+                    }
+                });
             }
 
             let remove_enabled = self.selected_project.is_some();
@@ -119,6 +130,17 @@ impl App {
                 ui.vertical(|ui| {
                     ui.horizontal(|ui| {
                         if ui.button("Update Docs Index").clicked() {
+                            if let Some(ref selected_project) = self.selected_project {
+                                let context = self.context.clone();
+                                let selected_project = selected_project.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) =
+                                        context.force_index_docs(&selected_project).await
+                                    {
+                                        tracing::error!("Failed to update docs index: {}", e);
+                                    }
+                                });
+                            }
                             self.logs
                                 .push(format!("Update Docs Index clicked for: {}", project.name));
                         }
@@ -165,6 +187,7 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &EguiContext, _frame: &mut eframe::Frame) {
         self.handle_notifications();
+        self.project_descriptions = self.context.project_descriptions();
 
         SidePanel::left("left_sidebar")
             .resizable(true)

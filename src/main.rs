@@ -6,25 +6,24 @@ mod project;
 mod ui;
 
 use std::sync::Arc;
+use tracing_subscriber::prelude::*;
 
 use crate::ui::App;
 use anyhow::{Context, Result};
 use context::Context as ContextType;
-use egui_aesthetix::Aesthetix;
 use lsp::RustAnalyzerLsp;
 use lsp_types::{HoverContents, MarkupContent, Position};
+use mcp::run_server;
 use project::Project;
 use tracing::{Level, info};
 use ui::apply_theme;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Keep tracing setup in main
-    tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .with_ansi(false)
-        .with_writer(std::io::stderr)
-        .init();
+    // tracing_subscriber::registry()
+    //     .with(ui::UITracingSubscriberLayer)
+    //     .init();
+    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 
     let project = Project::new("/Users/terhechte/Developer/Rust/supatest")
         .context("Failed to create project")?;
@@ -32,6 +31,12 @@ async fn main() -> Result<()> {
     let (sender, receiver) = flume::unbounded();
     let context = ContextType::new(4000, sender);
     context.add_project(project).await?;
+
+    // Run the MCP Server
+    let cloned_context = context.clone();
+    tokio::spawn(async move {
+        run_server(cloned_context).await.unwrap();
+    });
 
     run_ui(context, receiver)?;
 

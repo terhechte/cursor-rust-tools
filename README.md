@@ -10,3 +10,6 @@
 
 -> document symbols is always used first to retrieve individual symbols and fine the 
    one with the highest match likelihood
+
+
+   - [ ] start indexing when project is added

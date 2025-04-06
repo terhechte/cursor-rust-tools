@@ -63,12 +63,10 @@ impl RequestExtension for CallToolRequest {
 pub fn get_info_from_request(
     context: &Context,
     request: &CallToolRequest,
-) -> Result<(Arc<ProjectContext>, String, String), CallToolResponse> {
-    let file = match request.get_file() {
-        Ok(file) => file,
-        Err(response) => return Err(response),
-    };
-    let Some(project) = context.get_project_by_path(&PathBuf::from(file.clone())) else {
+) -> Result<(Arc<ProjectContext>, String, PathBuf), CallToolResponse> {
+    let file = request.get_file()?;
+    let absolute_path = PathBuf::from(file.clone());
+    let Some(project) = context.get_project_by_path(&absolute_path) else {
         return Err(error_response("No project found for file {file}"));
     };
 
@@ -77,7 +75,7 @@ pub fn get_info_from_request(
         .relative_path(&file)
         .map_err(|e| error_response(&e))?;
 
-    Ok((project, relative_path, file))
+    Ok((project, relative_path, absolute_path))
 }
 
 pub async fn find_symbol_position_in_file(
