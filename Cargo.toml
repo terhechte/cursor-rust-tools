@@ -1,0 +1,25 @@
+[package]
+name = "cursor-rust-tools"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.97"
+async-lsp = "0.2.2"
+async-process = "2.3.0"
+flume = "0.11.1"
+futures = "0.3.31"
+lsp-types = "0.95.1"
+#mcp-core = { version = "0.1.43", features = ["sse"] }
+#mcp-core = { path = "/Users/terhechte/Developer/temporary/mcp-core/mcp-core", features = ["sse"]}
+mcp-core = { git = "https://github.com/terhechte/mcp-core", branch = "allow-tool-context", features = ["sse"]}
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+tokio = { version = "1.44.1", features = ["full"] }
+tower = "0.5.2"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+url = "2.5.4"
+#mcp-core-macros = "0.1.11"
+schemars = "0.8.22"
+fuzzt = "0.3.1"
