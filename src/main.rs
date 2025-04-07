@@ -20,12 +20,9 @@ async fn main() -> Result<()> {
     //     .init();
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 
-    let project = Project::new("/Users/terhechte/Developer/Rust/supatest")
-        .context("Failed to create project")?;
-
     let (sender, receiver) = flume::unbounded();
-    let context = ContextType::new(4000, sender);
-    // context.add_project(project).await?;
+    let context = ContextType::new(4000, sender).await;
+    context.load_config().await?;
 
     // Run the MCP Server
     let cloned_context = context.clone();

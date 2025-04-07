@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock, RwLockWriteGuard};
@@ -13,6 +14,8 @@ use crate::{
 };
 use anyhow::Result;
 use flume::Sender;
+use serde::{Deserialize, Serialize};
+use tokio::task;
 
 #[derive(Debug)]
 pub enum ContextNotification {
@@ -66,7 +69,7 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new(port: u16, notifier: Sender<ContextNotification>) -> Self {
+    pub async fn new(port: u16, notifier: Sender<ContextNotification>) -> Self {
         let (lsp_sender, lsp_receiver) = flume::unbounded();
         let (docs_sender, docs_receiver) = flume::unbounded();
         let (mcp_sender, mcp_receiver) = flume::unbounded();
@@ -105,7 +108,7 @@ impl Context {
             }
         });
 
-        Self {
+        let context = Self {
             projects,
             transport: TransportType::Sse {
                 host: HOSTNAME.to_string(),
@@ -115,7 +118,17 @@ impl Context {
             docs_sender,
             mcp_sender,
             notifier,
-        }
+        };
+
+        // Load config after initial setup
+        // let cloned_context = context.clone();
+        // task::spawn(async move {
+        //     if let Err(e) = cloned_context.load_config().await {
+        //         tracing::error!("Failed to load config on startup: {}", e);
+        //     }
+        // });
+
+        context
     }
 
     pub fn address_information(&self) -> (String, u16) {
@@ -171,6 +184,104 @@ impl Context {
         Ok(())
     }
 
+    fn config_path(&self) -> PathBuf {
+        let parsed = shellexpand::tilde(&self.configuration_file()).to_string();
+        PathBuf::from(parsed)
+    }
+
+    fn write_config(&self) -> Result<()> {
+        println!("write config");
+        let projects_map = self
+            .projects
+            .read()
+            .expect("Failed to acquire read lock on projects");
+        let projects_to_save: Vec<&Project> = projects_map.values().map(|pc| &pc.project).collect();
+        println!("gotten info config");
+
+        let config_path = self.config_path();
+
+        let toml_string = toml::to_string_pretty(&projects_to_save)?;
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&config_path, toml_string)?;
+        tracing::debug!("Wrote config file to {:?}", config_path);
+        Ok(())
+    }
+
+    pub async fn load_config(&self) -> Result<()> {
+        let config_path = self.config_path();
+
+        if !config_path.exists() {
+            tracing::info!(
+                "Configuration file not found at {:?}, skipping load.",
+                config_path
+            );
+            return Ok(());
+        }
+
+        let toml_string = match fs::read_to_string(&config_path) {
+            Ok(content) => content,
+            Err(e) => {
+                tracing::error!("Failed to read config file {:?}: {}", config_path, e);
+                return Err(e.into()); // Propagate read error
+            }
+        };
+
+        if toml_string.trim().is_empty() {
+            tracing::info!(
+                "Configuration file {:?} is empty, skipping load.",
+                config_path
+            );
+            return Ok(());
+        }
+
+        let loaded_projects: Vec<Project> = match toml::from_str(&toml_string) {
+            Ok(projects) => projects,
+            Err(e) => {
+                tracing::error!(
+                    "Failed to parse TOML from config file {:?}: {}",
+                    config_path,
+                    e
+                );
+                // Don't return error here, maybe the file is corrupt but we can continue
+                return Ok(());
+            }
+        };
+
+        for project in loaded_projects {
+            // Validate project root before adding
+            if !project.root().exists() || !project.root().is_dir() {
+                tracing::warn!(
+                    "Project root {:?} from config does not exist or is not a directory, skipping.",
+                    project.root()
+                );
+                continue;
+            }
+            // We need to canonicalize again as the stored path might be relative or different
+            match Project::new(project.root()) {
+                Ok(new_project) => {
+                    if let Err(e) = self.add_project(new_project).await {
+                        tracing::error!(
+                            "Failed to add project {:?} from config: {}",
+                            project.root(),
+                            e
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to create project for root {:?} from config: {}",
+                        project.root(),
+                        e
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Add a new project to the context
     pub async fn add_project(&self, project: Project) -> Result<()> {
         let root = project.root().clone();
@@ -194,21 +305,37 @@ impl Context {
         if let Err(e) = self.notifier.send(ContextNotification::ProjectAdded(root)) {
             tracing::error!("Failed to send project added notification: {}", e);
         }
+
+        drop(projects_map);
+
+        // Write config after successfully adding
+        if let Err(e) = self.write_config() {
+            tracing::error!("Failed to write config after adding project: {}", e);
+        }
         Ok(())
     }
 
     /// Remove a project from the context
     pub fn remove_project(&mut self, root: &PathBuf) -> Option<Arc<ProjectContext>> {
-        let mut projects_map = self
-            .projects
-            .write()
-            .expect("Failed to acquire write lock on projects");
-        let project = projects_map.remove(root);
-        if let Err(e) = self
-            .notifier
-            .send(ContextNotification::ProjectRemoved(root.clone()))
-        {
-            tracing::error!("Failed to send project removed notification: {}", e);
+        let project = {
+            let mut projects_map = self
+                .projects
+                .write()
+                .expect("Failed to acquire write lock on projects");
+            projects_map.remove(root)
+        };
+
+        if project.is_some() {
+            if let Err(e) = self
+                .notifier
+                .send(ContextNotification::ProjectRemoved(root.clone()))
+            {
+                tracing::error!("Failed to send project removed notification: {}", e);
+            }
+            // Write config after successfully removing
+            if let Err(e) = self.write_config() {
+                tracing::error!("Failed to write config after removing project: {}", e);
+            }
         }
         project
     }

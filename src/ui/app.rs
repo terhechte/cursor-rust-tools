@@ -152,12 +152,11 @@ impl App {
             ui.small("Place this in your .cursor/mcp.json file");
 
             if ui.button("Open Conf").clicked() {
-                open::that("/Users/terhechte/Desktop");
+                open::that(shellexpand::tilde(&config_file).to_string());
             }
             if ui.button("Copy Conf Path").clicked() {
-                if let Some(expanded_path) = pathexpand::expand(&config_file) {
-                    ui.output_mut(|o| o.copied_text = expanded_path.to_string_lossy().to_string());
-                }
+                let path = shellexpand::tilde(&config_file).to_string();
+                ui.output_mut(|o| o.copied_text = path);
             }
             ui.small(&config_file);
             ui.small("To manually edit projects");

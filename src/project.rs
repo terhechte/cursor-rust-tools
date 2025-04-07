@@ -9,7 +9,7 @@ pub enum TransportType {
     Sse { host: String, port: u16 },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub root: PathBuf,
     pub ignore_crates: Vec<String>,
