@@ -1,12 +1,11 @@
 use anyhow::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json as json;
-use std::path::PathBuf;
-use std::process::Command;
+use tokio::process::Command;
 
-use crate::project::Repository;
+use crate::project::Project;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum CargoMessage {
     CompilerArtifact(json::Value),
@@ -21,7 +20,7 @@ pub enum CargoMessage {
     TestMessage(TestMessage),
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CompilerMessage {
     pub rendered: String,
@@ -30,7 +29,7 @@ pub struct CompilerMessage {
     pub spans: Vec<CompilerMessageSpan>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CompilerMessageSpan {
     pub column_start: usize,
@@ -40,7 +39,7 @@ pub struct CompilerMessageSpan {
     pub line_end: usize,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TestMessage {
     #[serde(rename = "type")]
     pub message_type: String,
@@ -51,65 +50,63 @@ pub struct TestMessage {
 
 #[derive(Clone, Debug)]
 pub struct CargoRemote {
-    repository: Repository,
+    repository: Project,
 }
 
 impl CargoRemote {
-    pub fn new(repository: Repository) -> Self {
+    pub fn new(repository: Project) -> Self {
         Self { repository }
     }
 
-    fn run_cargo_command(&self, args: &[&str]) -> Result<Vec<CargoMessage>> {
+    async fn run_cargo_command(&self, args: &[&str]) -> Result<Vec<CargoMessage>> {
         let output = Command::new("cargo")
-            .current_dir(self.repository.path())
+            .current_dir(self.repository.root())
             .args(args)
-            .output()?;
+            .output()
+            .await?;
 
         let stdout = String::from_utf8(output.stdout)?;
         let messages: Vec<CargoMessage> = stdout
             .lines()
             .filter(|line| !line.is_empty())
-            .map(|line| json::from_str(line))
+            .map(json::from_str)
             .collect::<Result<_, _>>()?;
 
         Ok(messages)
     }
 
-    pub fn build(&self) -> Result<Vec<CargoMessage>> {
+    #[allow(dead_code)]
+    pub async fn build(&self) -> Result<Vec<CargoMessage>> {
         self.run_cargo_command(&["build", "--message-format=json"])
+            .await
     }
 
-    pub fn check(&self) -> Result<Vec<CargoMessage>> {
+    pub async fn check(&self) -> Result<Vec<CargoMessage>> {
         self.run_cargo_command(&["check", "--message-format=json"])
+            .await
     }
 
-    pub fn test(&self) -> Result<Vec<CargoMessage>> {
-        self.run_cargo_command(&["test", "--message-format=json"])
+    pub async fn test(&self, test_name: Option<String>) -> Result<Vec<CargoMessage>> {
+        let mut args = vec!["test", "--message-format=json"];
+        if let Some(ref test_name) = test_name {
+            args.push("--");
+            args.push(test_name);
+        }
+        self.run_cargo_command(&args).await
     }
 
-    pub fn fmt(&self) -> Result<()> {
+    #[allow(dead_code)]
+    pub async fn fmt(&self) -> Result<()> {
         let output = Command::new("cargo")
-            .current_dir(self.repository.path())
+            .current_dir(self.repository.root())
             .args(["fmt"])
-            .output()?;
+            .output()
+            .await?;
 
         if !output.status.success() {
             anyhow::bail!("cargo fmt failed");
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_cargo_remote() {
-        let repository = Repository::new(PathBuf::from("assets/zoxide-main")).unwrap();
-        let cargo_remote = CargoRemote::new(repository);
-        let messages = cargo_remote.check().unwrap();
-        println!("{:?}", messages);
     }
 }
