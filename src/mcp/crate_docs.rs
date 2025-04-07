@@ -31,8 +31,12 @@ impl CrateDocs {
                         "type": "string",
                         "description": "The optional name of a symbol in the documentation. If not provided, the main readme for the dependency will be returned."
                     },
+                    "file": {
+                        "type": "string",
+                        "description": "The absolute path to the `Cargo.toml` file of the project"
+                    }
                 },
-                "required": ["dependency"]
+                "required": ["dependency", "file"]
             }),
         }
     }
