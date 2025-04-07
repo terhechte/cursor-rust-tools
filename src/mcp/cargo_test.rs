@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use crate::{
-    cargo_remote::{CargoMessage, TestMessage},
-    context::{Context, ProjectContext},
-};
+use crate::context::{Context, ProjectContext};
 use anyhow::Result;
 use mcp_core::{
     tools::ToolHandlerFn,
@@ -33,8 +30,16 @@ impl CargoTest {
                         "type": "string",
                         "description": "Optional name of a single test to run instead of all tests."
                     },
+                    "file": {
+                        "type": "string",
+                        "description": "The absolute path to the `Cargo.toml` file of the project to check"
+                    },
+                    "backtrace": {
+                        "type": "boolean",
+                        "description": "If true, the backtrace will be included in the response. Default is false."
+                    }
                 },
-                "required": []
+                "required": ["file"]
             }),
         }
     }
@@ -88,27 +93,22 @@ async fn handle_request(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let messages: Vec<TestMessage> = project
-        .cargo_remote
-        .test(test)
-        .await
-        .map_err(|e| error_response(&format!("{e:?}")))?
-        .into_iter()
-        .filter_map(|message| {
-            if let CargoMessage::TestMessage(test_message) = message {
-                Some(test_message)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let backtrace = request
+        .arguments
+        .as_ref()
+        .and_then(|args| args.get("backtrace"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
-    let response_message =
-        serde_json::to_string_pretty(&messages).map_err(|e| error_response(&format!("{e:?}")))?;
+    let messages: Vec<String> = project
+        .cargo_remote
+        .test(test, backtrace)
+        .await
+        .map_err(|e| error_response(&format!("{e:?}")))?;
 
     Ok(CallToolResponse {
         content: vec![ToolResponseContent::Text {
-            text: response_message,
+            text: messages.join("\n\n"),
         }],
         is_error: None,
         meta: None,

@@ -25,8 +25,17 @@ impl CargoCheck {
             ),
             input_schema: json!({
                 "type": "object",
-                "properties": {},
-                "required": []
+                "properties": {
+                    "file": {
+                        "type": "string",
+                        "description": "The absolute path to the `Cargo.toml` file of the project to check"
+                    },
+                    "only_errors": {
+                        "type": "boolean",
+                        "description": "If true, only errors will be returned. If false, errors and warnings will be returned."
+                    }
+                },
+                "required": ["file", "only_errors"]
             }),
         }
     }
@@ -71,11 +80,18 @@ impl CargoCheck {
 async fn handle_request(
     project: Arc<ProjectContext>,
     _relative_file: &str,
-    _request: &CallToolRequest,
+    request: &CallToolRequest,
 ) -> Result<CallToolResponse, CallToolResponse> {
+    let only_errors = request
+        .arguments
+        .as_ref()
+        .and_then(|args| args.get("only_errors"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     let messages = project
         .cargo_remote
-        .check()
+        .check(only_errors)
         .await
         .map_err(|e| error_response(&format!("{e:?}")))?;
 

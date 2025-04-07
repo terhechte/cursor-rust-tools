@@ -10,14 +10,8 @@ use crate::project::Project;
 pub enum CargoMessage {
     CompilerArtifact(json::Value),
     BuildScriptExecuted(json::Value),
-    CompilerMessage {
-        message: CompilerMessage,
-    },
-    BuildFinished {
-        success: bool,
-    },
-    #[serde(rename = "test-message")]
-    TestMessage(TestMessage),
+    CompilerMessage { message: CompilerMessage },
+    BuildFinished { success: bool },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -39,15 +33,6 @@ pub struct CompilerMessageSpan {
     pub line_end: usize,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct TestMessage {
-    #[serde(rename = "type")]
-    pub message_type: String,
-    pub name: Option<String>,
-    pub event: String,
-    pub stdout: Option<String>,
-}
-
 #[derive(Clone, Debug)]
 pub struct CargoRemote {
     repository: Project,
@@ -58,55 +43,86 @@ impl CargoRemote {
         Self { repository }
     }
 
-    async fn run_cargo_command(&self, args: &[&str]) -> Result<Vec<CargoMessage>> {
+    async fn run_cargo_command(
+        &self,
+        args: &[&str],
+        backtrace: bool,
+    ) -> Result<(Vec<CargoMessage>, Vec<String>)> {
         let output = Command::new("cargo")
             .current_dir(self.repository.root())
             .args(args)
+            .env("RUST_BACKTRACE", if backtrace { "full" } else { "0" })
             .output()
             .await?;
 
         let stdout = String::from_utf8(output.stdout)?;
-        let messages: Vec<CargoMessage> = stdout
-            .lines()
-            .filter(|line| !line.is_empty())
-            .map(json::from_str)
-            .collect::<Result<_, _>>()?;
 
-        Ok(messages)
+        let mut messages = Vec::new();
+        let mut test_messages = Vec::new();
+        for line in stdout.lines().filter(|line| !line.is_empty()) {
+            match json::from_str::<CargoMessage>(line) {
+                Ok(message) => {
+                    messages.push(message);
+                }
+                Err(_) => {
+                    // Cargo test doesn't respect `message-format=json`
+                    test_messages.push(line.to_string());
+                }
+            }
+        }
+
+        Ok((messages, test_messages))
     }
 
-    #[allow(dead_code)]
-    pub async fn build(&self) -> Result<Vec<CargoMessage>> {
-        self.run_cargo_command(&["build", "--message-format=json"])
-            .await
+    pub async fn check(&self, only_errors: bool) -> Result<Vec<String>> {
+        let (messages, _) = self
+            .run_cargo_command(&["check", "--message-format=json"], false)
+            .await?;
+        Ok(messages
+            .into_iter()
+            .filter_map(|message| match message {
+                CargoMessage::CompilerMessage { message } => {
+                    if only_errors && message.level != "error" {
+                        return None;
+                    }
+                    Some(message.rendered)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>())
     }
 
-    pub async fn check(&self) -> Result<Vec<CargoMessage>> {
-        self.run_cargo_command(&["check", "--message-format=json"])
-            .await
-    }
-
-    pub async fn test(&self, test_name: Option<String>) -> Result<Vec<CargoMessage>> {
+    pub async fn test(&self, test_name: Option<String>, backtrace: bool) -> Result<Vec<String>> {
         let mut args = vec!["test", "--message-format=json"];
         if let Some(ref test_name) = test_name {
             args.push("--");
+            args.push("--nocapture");
             args.push(test_name);
         }
-        self.run_cargo_command(&args).await
+        let (_, messages) = self.run_cargo_command(&args, backtrace).await?;
+        Ok(messages)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_cargo_remote_check() {
+        let project = Project::new("/Users/terhechte/Developer/Rust/supatest").unwrap();
+        let cargo_remote = CargoRemote::new(project);
+        let messages = cargo_remote.check(false).await.unwrap();
+        println!("{:#?}", messages);
     }
 
-    #[allow(dead_code)]
-    pub async fn fmt(&self) -> Result<()> {
-        let output = Command::new("cargo")
-            .current_dir(self.repository.root())
-            .args(["fmt"])
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            anyhow::bail!("cargo fmt failed");
-        }
-
-        Ok(())
+    #[tokio::test]
+    #[ignore]
+    async fn test_cargo_remote_test() {
+        let project = Project::new("/Users/terhechte/Developer/Rust/supatest").unwrap();
+        let cargo_remote = CargoRemote::new(project);
+        let messages = cargo_remote.test(None, true).await.unwrap();
+        println!("{:#?}", messages);
     }
 }
