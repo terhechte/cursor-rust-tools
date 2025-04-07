@@ -30,7 +30,7 @@ pub(super) enum McpNotification {
 }
 
 pub async fn run_server(context: Context) -> Result<()> {
-    let server_protocol = Server::builder("cursor-rust-tools".to_string(), "1.0".to_string())
+    let server_protocol = Server::builder("cursor_rust_tools".to_string(), "1.0".to_string())
         .capabilities(ServerCapabilities {
             tools: Some(json!({
                 "listChanged": false,

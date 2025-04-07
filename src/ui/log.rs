@@ -41,7 +41,6 @@ where
         event: &tracing::Event<'_>,
         _ctx: tracing_subscriber::layer::Context<'_, S>,
     ) {
-        dbg!("on_event");
         let mut visitor = ToStringVisitor::default();
         event.record(&mut visitor);
 

@@ -112,12 +112,12 @@ pub fn get_cargo_dependencies(project: &crate::project::Project) -> Result<Vec<(
     // Parse dependencies from each member
     for member_path in members {
         let Ok(member_path) = member_path else {
-            println!("Error: {:?}", member_path);
+            tracing::error!("Error: {:?}", member_path);
             continue;
         };
         let member_cargo_path = member_path.join("Cargo.toml");
         if member_cargo_path.exists() {
-            println!("Member path: {:?}", member_path);
+            tracing::debug!("Member path: {:?}", member_path);
             let member_content = fs::read_to_string(member_cargo_path)?;
             let member_toml: Value = toml::from_str(&member_content)?;
 

@@ -18,7 +18,9 @@ async fn main() -> Result<()> {
     // tracing_subscriber::registry()
     //     .with(ui::UITracingSubscriberLayer)
     //     .init();
-    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
+    tracing_subscriber::fmt()
+        .with_max_level(Level::DEBUG)
+        .init();
 
     let (sender, receiver) = flume::unbounded();
     let context = ContextType::new(4000, sender).await;

@@ -53,6 +53,7 @@ impl SymbolReferences {
                         Ok(info) => info,
                         Err(response) => return response,
                     };
+                tracing::info!("Sending MCP notification for symbol references");
                 if let Err(e) = clone
                     .send_mcp_notification(McpNotification::Request {
                         content: request.clone(),
@@ -62,6 +63,7 @@ impl SymbolReferences {
                 {
                     tracing::error!("Failed to send MCP notification: {}", e);
                 }
+                tracing::info!("Sending MCP notification for symbol references");
                 let response = match handle_request(project, &relative_file, &request).await {
                     Ok(response) => response,
                     Err(response) => response,

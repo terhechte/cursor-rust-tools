@@ -17,7 +17,7 @@ use flume::Sender;
 use serde::{Deserialize, Serialize};
 use tokio::task;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ContextNotification {
     Lsp(LspNotification),
     Docs(DocsNotification),
@@ -27,8 +27,8 @@ pub enum ContextNotification {
 }
 
 impl ContextNotification {
-    pub fn project_name(&self) -> String {
-        let project_path = match self {
+    pub fn notification_path(&self) -> PathBuf {
+        match self {
             ContextNotification::Lsp(LspNotification::Indexing { project, .. }) => project.clone(),
             ContextNotification::Docs(DocsNotification::Indexing { project, .. }) => {
                 project.clone()
@@ -37,12 +37,7 @@ impl ContextNotification {
             ContextNotification::Mcp(McpNotification::Response { project, .. }) => project.clone(),
             ContextNotification::ProjectAdded(project) => project.clone(),
             ContextNotification::ProjectRemoved(project) => project.clone(),
-        };
-        project_path
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_string()
+        }
     }
 }
 
@@ -190,17 +185,25 @@ impl Context {
     }
 
     fn write_config(&self) -> Result<()> {
-        println!("write config");
         let projects_map = self
             .projects
             .read()
             .expect("Failed to acquire read lock on projects");
-        let projects_to_save: Vec<&Project> = projects_map.values().map(|pc| &pc.project).collect();
-        println!("gotten info config");
+        let projects_to_save: Vec<SerProject> = projects_map
+            .values()
+            .map(|pc| &pc.project)
+            .map(|p| SerProject {
+                root: p.root().to_string_lossy().to_string(),
+                ignore_crates: p.ignore_crates().to_vec(),
+            })
+            .collect();
+        let config = SerConfig {
+            projects: projects_to_save,
+        };
 
         let config_path = self.config_path();
 
-        let toml_string = toml::to_string_pretty(&projects_to_save)?;
+        let toml_string = toml::to_string_pretty(&config)?;
         if let Some(parent) = config_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -236,8 +239,8 @@ impl Context {
             return Ok(());
         }
 
-        let loaded_projects: Vec<Project> = match toml::from_str(&toml_string) {
-            Ok(projects) => projects,
+        let loaded_config: SerConfig = match toml::from_str(&toml_string) {
+            Ok(config) => config,
             Err(e) => {
                 tracing::error!(
                     "Failed to parse TOML from config file {:?}: {}",
@@ -249,7 +252,11 @@ impl Context {
             }
         };
 
-        for project in loaded_projects {
+        for project in loaded_config.projects {
+            let project = Project {
+                root: PathBuf::from(&project.root),
+                ignore_crates: project.ignore_crates,
+            };
             // Validate project root before adding
             if !project.root().exists() || !project.root().is_dir() {
                 tracing::warn!(
@@ -389,7 +396,7 @@ impl Context {
 const CONFIG_TEMPLATE: &str = r#"
 {
     "mcpServers": {
-        "server-name": {
+        "cursor_rust_tools": {
             "url": "http://{{HOST}}:{{PORT}}/sse",
             "env": {
                 "API_KEY": ""
@@ -398,3 +405,32 @@ const CONFIG_TEMPLATE: &str = r#"
     }
 }
 "#;
+
+#[derive(Serialize, Deserialize, Debug)]
+struct SerConfig {
+    projects: Vec<SerProject>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct SerProject {
+    root: String,
+    ignore_crates: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ser_project() {
+        let project = SerProject {
+            root: "test".to_string(),
+            ignore_crates: vec!["test".to_string()],
+        };
+        let config = SerConfig {
+            projects: vec![project],
+        };
+        let toml_string = toml::to_string_pretty(&config).unwrap();
+        fs::write("/tmp/.blah", toml_string).unwrap();
+    }
+}

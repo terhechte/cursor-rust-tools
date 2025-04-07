@@ -1,6 +1,7 @@
 use open;
 use std::{collections::HashMap, path::PathBuf};
 
+use chrono::{DateTime, Utc};
 use egui::{
     CentralPanel, Color32, Context as EguiContext, Frame, RichText, ScrollArea, SidePanel,
     TopBottomPanel, Ui,
@@ -29,13 +30,23 @@ enum SidebarTab {
     Info,
 }
 
+#[derive(Clone, Debug)]
+pub struct TimestampedEvent(DateTime<Utc>, ContextNotification);
+
+impl PartialEq for TimestampedEvent {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
 pub struct App {
     context: Context,
     receiver: Receiver<ContextNotification>,
     selected_project: Option<PathBuf>,
     logs: Vec<String>,
-    events: HashMap<String, Vec<ContextNotification>>,
+    events: HashMap<String, Vec<TimestampedEvent>>,
     selected_sidebar_tab: SidebarTab,
+    selected_event: Option<TimestampedEvent>,
 }
 
 impl App {
@@ -47,18 +58,37 @@ impl App {
             logs: Vec::new(),
             events: HashMap::new(),
             selected_sidebar_tab: SidebarTab::Projects,
+            selected_event: None,
         }
     }
 
-    fn handle_notifications(&mut self) {
+    fn handle_notifications(&mut self) -> bool {
+        let mut has_new_events = false;
         while let Ok(notification) = self.receiver.try_recv() {
-            dbg!(&notification);
-            let project_name = notification.project_name();
+            if matches!(notification, ContextNotification::Lsp(_)) {
+                continue;
+            }
+            has_new_events = true;
+            tracing::debug!("Received notification: {:?}", notification);
+            let project_path = notification.notification_path();
+            let Some(project) = self.context.get_project_by_path(&project_path) else {
+                tracing::error!("Project not found: {:?}", project_path);
+                continue;
+            };
+            let project_name = project
+                .project
+                .root
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            let timestamped_event = TimestampedEvent(Utc::now(), notification);
             self.events
                 .entry(project_name)
                 .or_default()
-                .push(notification);
+                .push(timestamped_event);
         }
+        has_new_events
     }
 
     fn draw_left_sidebar(&mut self, ui: &mut Ui, project_descriptions: &[ProjectDescription]) {
@@ -147,16 +177,18 @@ impl App {
         ui.vertical_centered_justified(|ui| {
             if ui.button("Copy MCP JSON").clicked() {
                 let config = self.context.mcp_configuration();
-                ui.output_mut(|o| o.copied_text = config);
+                ui.ctx().copy_text(config);
             }
             ui.small("Place this in your .cursor/mcp.json file");
 
             if ui.button("Open Conf").clicked() {
-                open::that(shellexpand::tilde(&config_file).to_string());
+                if let Err(e) = open::that(shellexpand::tilde(&config_file).to_string()) {
+                    tracing::error!("Failed to open config file: {}", e);
+                }
             }
             if ui.button("Copy Conf Path").clicked() {
                 let path = shellexpand::tilde(&config_file).to_string();
-                ui.output_mut(|o| o.copied_text = path);
+                ui.ctx().copy_text(path);
             }
             ui.small(&config_file);
             ui.small("To manually edit projects");
@@ -203,8 +235,13 @@ impl App {
                     ui.label("Events:");
                     ScrollArea::vertical().show(ui, |ui| {
                         if let Some(project_events) = self.events.get(&project.name) {
-                            for event in project_events {
-                                let event_str = match event {
+                            let mut event_to_select = None;
+                            for event_tuple in project_events.iter().rev() {
+                                let TimestampedEvent(timestamp, event) = event_tuple;
+
+                                let timestamp_str = timestamp.format("%H:%M:%S").to_string();
+
+                                let event_details_str = match event {
                                     ContextNotification::Lsp(LspNotification::Indexing {
                                         ..
                                     }) => continue,
@@ -236,8 +273,25 @@ impl App {
                                         format!("Project Removed: {:?}", project)
                                     }
                                 };
-                                ui.label(event_str);
+
+                                let full_event_str =
+                                    format!("{} - {}", timestamp_str, event_details_str);
+
+                                let is_selected = self.selected_event.as_ref() == Some(event_tuple);
+
+                                let truncated_str = if full_event_str.len() > 120 {
+                                    format!("{}...", &full_event_str[..117])
+                                } else {
+                                    full_event_str
+                                };
+                                let response = ui.selectable_label(is_selected, truncated_str);
+                                if response.clicked() {
+                                    event_to_select = Some(event_tuple.clone());
+                                }
                                 ui.separator();
+                            }
+                            if let Some(selected) = event_to_select {
+                                self.selected_event = Some(selected);
                             }
                         } else {
                             ui.label("No events for this project yet.");
@@ -246,15 +300,22 @@ impl App {
                 });
             } else {
                 ui.label("Error: Selected project not found.");
+                if self.selected_project.is_some() {
+                    self.selected_event = None;
+                }
                 self.selected_project = None;
             }
         } else {
             ui.centered_and_justified(|ui| {
                 ui.label("Select a project from the left sidebar");
             });
+            if self.selected_event.is_some() {
+                self.selected_event = None;
+            }
         }
     }
 
+    #[allow(dead_code)]
     fn draw_bottom_bar(&mut self, ui: &mut Ui) {
         ui.label("Logs:");
         ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
@@ -263,11 +324,30 @@ impl App {
             }
         });
     }
+
+    fn draw_right_sidebar(&mut self, ui: &mut Ui, event: TimestampedEvent) {
+        ui.horizontal(|ui| {
+            if ui.button("X").on_hover_text("Close").clicked() {
+                self.selected_event = None;
+            }
+            ui.heading("Selected Event Details");
+        });
+        ui.separator();
+
+        ScrollArea::vertical().show(ui, |ui| {
+            ui.label(format!(
+                "Timestamp: {}",
+                event.0.format("%Y-%m-%d %H:%M:%S.%3f")
+            ));
+            ui.separator();
+            ui.monospace(format!("{:#?}", event.1)); // Pretty-print the event
+        });
+    }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &EguiContext, _frame: &mut eframe::Frame) {
-        self.handle_notifications();
+        let has_new_events = self.handle_notifications();
         let project_descriptions = self.context.project_descriptions();
 
         let sidebar_frame = egui::Frame {
@@ -283,18 +363,27 @@ impl eframe::App for App {
                 self.draw_left_sidebar(ui, &project_descriptions);
             });
 
-        TopBottomPanel::bottom("bottom_panel")
-            .resizable(true)
-            .default_height(150.0)
-            .show(ctx, |ui| {
-                self.draw_bottom_bar(ui);
-            });
+        // TopBottomPanel::bottom("bottom_panel")
+        //     .resizable(true)
+        //     .default_height(150.0)
+        //     .show(ctx, |ui| {
+        //         self.draw_bottom_bar(ui);
+        //     });
+
+        if let Some(event) = self.selected_event.clone() {
+            SidePanel::right("right_sidebar")
+                .resizable(true)
+                .default_width(350.0) // You can adjust the default width
+                .show(ctx, |ui| {
+                    self.draw_right_sidebar(ui, event);
+                });
+        }
 
         CentralPanel::default().show(ctx, |ui| {
             self.draw_main_area(ui, &project_descriptions);
         });
 
-        if !self.receiver.is_empty() {
+        if has_new_events {
             ctx.request_repaint();
         }
     }
@@ -345,32 +434,29 @@ impl<'a> ListCell<'a> {
 
         // Draw the content (label and spinner) within the allocated rectangle
         let content_rect = rect.shrink(ui.style().spacing.item_spacing.x); // Add horizontal padding
-        let mut content_ui = ui.child_ui(
-            content_rect,
-            egui::Layout::left_to_right(egui::Align::Center),
-            None,
-        );
 
-        content_ui.horizontal(|ui| {
-            // Use a simple label, adjust text color if selected
-            let text_color = if self.is_selected {
-                ui.style().visuals.strong_text_color()
-            } else {
-                ui.style().visuals.text_color()
-            };
+        ui.allocate_ui_at_rect(content_rect, |ui| {
+            ui.horizontal(|ui| {
+                // Use a simple label, adjust text color if selected
+                let text_color = if self.is_selected {
+                    ui.style().visuals.strong_text_color()
+                } else {
+                    ui.style().visuals.text_color()
+                };
 
-            // Create a Label widget and set its sense to Hover only,
-            // so it doesn't steal clicks from the parent response.
-            let label = egui::Label::new(RichText::new(self.text).color(text_color))
-                .sense(egui::Sense::hover());
-            ui.add(label);
+                // Create a Label widget and set its sense to Hover only,
+                // so it doesn't steal clicks from the parent response.
+                let label = egui::Label::new(RichText::new(self.text).color(text_color))
+                    .sense(egui::Sense::hover());
+                ui.add(label);
 
-            // Align spinner to the right
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if self.is_spinning {
-                    // Use the same text_color for the spinner for consistency
-                    ui.add(egui::Spinner::new().color(text_color));
-                }
+                // Align spinner to the right
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if self.is_spinning {
+                        // Use the same text_color for the spinner for consistency
+                        ui.add(egui::Spinner::new().color(text_color));
+                    }
+                });
             });
         });
 

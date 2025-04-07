@@ -115,7 +115,6 @@ fn path_to_cache_key(path: &Path, docs_dir: PathBuf) -> Option<String> {
 }
 
 fn extract_crate_and_path(path: &str) -> Option<(&str, &str)> {
-    println!("path: {path}");
     let parts: Vec<&str> = path.splitn(2, '/').collect();
     match parts.as_slice() {
         [crate_name, rest] => Some((*crate_name, *rest)),

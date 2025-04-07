@@ -112,7 +112,8 @@ impl RustAnalyzerLsp {
             })
             .await
             .context("LSP initialize failed")?;
-        info!("Initialized: {init_ret:?}");
+        tracing::trace!("Initialized: {init_ret:?}");
+        info!("Initialized");
 
         client
             .server

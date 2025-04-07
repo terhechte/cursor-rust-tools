@@ -30,13 +30,15 @@ impl RequestExtension for CallToolRequest {
             .and_then(|args| args.get("line"))
             .and_then(|v| v.as_u64())
             .ok_or_else(|| error_response("Line is required"))?;
+        // I'm not sure about this. Cursor just now used 0 based indexing
         // Cursor gives llm's line numbers as 1-based, but the LSP uses 0-based
-        if number == 0 {
-            return Err(error_response(
-                "Line number must be greater than 0 as line numbers are 1 based",
-            ));
-        }
-        Ok(number - 1)
+        Ok(number)
+        // if number == 0 {
+        // return Err(error_response(
+        // "Line number must be greater than 0 as line numbers are 1 based",
+        // ));
+        // }
+        // Ok(number - 1)
     }
 
     fn get_symbol(&self) -> Result<String, CallToolResponse> {
