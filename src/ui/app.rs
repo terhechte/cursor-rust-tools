@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use chrono::{DateTime, Utc};
 use egui::{CentralPanel, Color32, Context as EguiContext, RichText, ScrollArea, SidePanel, Ui};
@@ -40,6 +43,7 @@ pub struct App {
     events: HashMap<String, Vec<TimestampedEvent>>,
     selected_sidebar_tab: SidebarTab,
     selected_event: Option<TimestampedEvent>,
+    project_descriptions: Vec<ProjectDescription>,
 }
 
 impl App {
@@ -52,6 +56,7 @@ impl App {
             events: HashMap::new(),
             selected_sidebar_tab: SidebarTab::Projects,
             selected_event: None,
+            project_descriptions: Vec::new(),
         }
     }
 
@@ -61,25 +66,24 @@ impl App {
             if matches!(notification, ContextNotification::Lsp(_)) {
                 continue;
             }
+            if let ContextNotification::ProjectDescriptions(project_descriptions) = notification {
+                self.project_descriptions = project_descriptions;
+                continue;
+            }
             has_new_events = true;
             tracing::debug!("Received notification: {:?}", notification);
             let project_path = notification.notification_path();
-            let Some(project) = self.context.get_project_by_path(&project_path) else {
+            let Some(project) = find_root_project(&project_path, &self.project_descriptions) else {
                 tracing::error!("Project not found: {:?}", project_path);
                 continue;
             };
-            let project_name = project
-                .project
-                .root
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_string();
+            let project_name = project.file_name().unwrap().to_string_lossy().to_string();
             let timestamped_event = TimestampedEvent(Utc::now(), notification);
             self.events
                 .entry(project_name)
                 .or_default()
                 .push(timestamped_event);
+            self.context.request_project_descriptions();
         }
         has_new_events
     }
@@ -124,7 +128,7 @@ impl App {
         ui.vertical_centered_justified(|ui| {
             if ui.button("Add Project").clicked() {
                 if let Some(path_buf) = rfd::FileDialog::new().pick_folder() {
-                    tracing::info!("Adding project: {:?}", path_buf);
+                    tracing::debug!("Adding project: {:?}", path_buf);
 
                     let context = self.context.clone();
                     tokio::spawn(async move {
@@ -137,7 +141,7 @@ impl App {
                         {
                             tracing::error!("Failed to add project: {}", e);
                         } else {
-                            tracing::info!("Project added successfully.");
+                            tracing::debug!("Project added successfully.");
                         }
                     });
                 }
@@ -149,7 +153,10 @@ impl App {
                 .clicked()
             {
                 if let Some(selected_root) = self.selected_project.take() {
-                    self.context.remove_project(&selected_root);
+                    let context = self.context.clone();
+                    tokio::spawn(async move {
+                        let _ = context.remove_project(&selected_root).await;
+                    });
                 }
             }
         });
@@ -334,7 +341,7 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &EguiContext, _frame: &mut eframe::Frame) {
         let has_new_events = self.handle_notifications();
-        let project_descriptions = self.context.project_descriptions();
+        let project_descriptions = self.project_descriptions.clone();
 
         let sidebar_frame = egui::Frame {
             fill: egui::Color32::from_rgb(32, 32, 32), // Darker background
@@ -452,4 +459,18 @@ impl<'a> ListCell<'a> {
 
         response
     }
+}
+fn find_root_project(mut path: &Path, projects: &[ProjectDescription]) -> Option<PathBuf> {
+    if let Some(project) = projects.iter().find(|p| p.root == *path) {
+        return Some(project.root.clone());
+    }
+
+    while let Some(parent) = path.parent() {
+        path = parent;
+        if let Some(project) = projects.iter().find(|p| p.root == *path) {
+            return Some(project.root.clone());
+        }
+    }
+
+    None
 }

@@ -61,13 +61,13 @@ impl RequestExtension for CallToolRequest {
 }
 
 /// Returns the project, the relative file path and the absolute file path
-pub fn get_info_from_request(
+pub async fn get_info_from_request(
     context: &Context,
     request: &CallToolRequest,
 ) -> Result<(Arc<ProjectContext>, String, PathBuf), CallToolResponse> {
     let file = request.get_file()?;
     let absolute_path = PathBuf::from(file.clone());
-    let Some(project) = context.get_project_by_path(&absolute_path) else {
+    let Some(project) = context.get_project_by_path(&absolute_path).await else {
         return Err(error_response("No project found for file {file}"));
     };
 

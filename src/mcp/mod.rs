@@ -1,3 +1,5 @@
+mod cargo_check;
+mod cargo_test;
 mod crate_docs;
 mod symbol_docs;
 mod symbol_impl;
@@ -56,6 +58,14 @@ pub async fn run_server(context: Context) -> Result<()> {
         .register_tool(
             crate_docs::CrateDocs::tool(),
             crate_docs::CrateDocs::call(context.clone()),
+        )
+        .register_tool(
+            cargo_check::CargoCheck::tool(),
+            cargo_check::CargoCheck::call(context.clone()),
+        )
+        .register_tool(
+            cargo_test::CargoTest::tool(),
+            cargo_test::CargoTest::call(context.clone()),
         )
         .build();
 

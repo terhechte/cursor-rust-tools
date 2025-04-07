@@ -1,3 +1,4 @@
+mod cargo_remote;
 mod context;
 mod docs;
 mod lsp;
@@ -5,22 +6,40 @@ mod mcp;
 mod project;
 mod ui;
 
+use std::env::args;
+
 use crate::ui::App;
 use anyhow::Result;
 use context::Context as ContextType;
 use mcp::run_server;
-use tracing::Level;
+use tracing::{error, info};
+use tracing_subscriber::{
+    EnvFilter, Layer, fmt::format::PrettyFields, layer::SubscriberExt, util::SubscriberInitExt,
+};
 use ui::apply_theme;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG)
+    let log_layer = tracing_subscriber::fmt::layer()
+        .event_format(tracing_subscriber::fmt::format().compact())
+        .fmt_fields(PrettyFields::new())
+        .boxed();
+
+    tracing_subscriber::registry()
+        .with(
+            (EnvFilter::builder().try_from_env())
+                .unwrap_or(EnvFilter::new("cursor_rust_tools=info")),
+        )
+        .with(log_layer)
         .init();
+
+    let no_ui = args().any(|arg| arg == "--no-ui");
 
     let (sender, receiver) = flume::unbounded();
     let context = ContextType::new(4000, sender).await;
     context.load_config().await?;
+
+    let final_context = context.clone();
 
     // Run the MCP Server
     let cloned_context = context.clone();
@@ -28,7 +47,31 @@ async fn main() -> Result<()> {
         run_server(cloned_context).await.unwrap();
     });
 
-    run_ui(context, receiver)?;
+    if no_ui {
+        info!(
+            "Running in CLI mode on port {}:{}",
+            context.address_information().0,
+            context.address_information().1
+        );
+        info!("Configuration file: {}", context.configuration_file());
+        if context.project_descriptions().await.is_empty() {
+            error!("No projects found, please run without `--no-ui` or edit configuration file");
+            return Ok(());
+        }
+        info!(
+            "Cursor mcp json (project/.cursor.mcp.json):\n```json\n{}\n```",
+            context.mcp_configuration()
+        );
+        loop {
+            while let Ok(notification) = receiver.try_recv() {
+                info!("  {}", notification.description());
+            }
+        }
+    } else {
+        run_ui(context, receiver)?;
+    }
+
+    final_context.shutdown_all().await;
 
     Ok(())
 }

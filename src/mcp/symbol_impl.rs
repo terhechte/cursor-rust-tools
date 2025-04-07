@@ -51,7 +51,7 @@ impl SymbolImpl {
             let clone = context.clone();
             Box::pin(async move {
                 let (project, relative_file, absolute_file) =
-                    match get_info_from_request(&clone, &request) {
+                    match get_info_from_request(&clone, &request).await {
                         Ok(info) => info,
                         Err(response) => return response,
                     };

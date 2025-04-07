@@ -66,7 +66,7 @@ impl LanguageClient for ClientState {
     }
 
     fn show_message(&mut self, params: ShowMessageParams) -> Self::NotifyResult {
-        tracing::info!("Message {:?}: {}", params.typ, params.message);
+        tracing::debug!("Message {:?}: {}", params.typ, params.message);
         ControlFlow::Continue(())
     }
 }

@@ -19,7 +19,7 @@ use serde_json::json;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tower::ServiceBuilder;
-use tracing::info;
+use tracing::{debug, info};
 
 use super::client_state::ClientState;
 use crate::lsp::LspNotification;
@@ -31,7 +31,7 @@ pub struct RustAnalyzerLsp {
     project: Project,
     server: Mutex<ServerSocket>,
     #[allow(dead_code)] // Keep the handle to ensure the mainloop runs
-    mainloop_handle: JoinHandle<()>,
+    mainloop_handle: Mutex<Option<JoinHandle<()>>>,
     indexed_rx: Mutex<flume::Receiver<()>>,
 }
 
@@ -64,7 +64,7 @@ impl RustAnalyzerLsp {
 
         let mainloop_handle = tokio::spawn(async move {
             match mainloop.run_buffered(stdout, stdin).await {
-                Ok(()) => info!("LSP mainloop finished gracefully."),
+                Ok(()) => debug!("LSP mainloop finished gracefully."),
                 Err(e) => tracing::error!("LSP mainloop finished with error: {}", e),
             }
         });
@@ -72,7 +72,7 @@ impl RustAnalyzerLsp {
         let client = Self {
             project: project.clone(),
             server: Mutex::new(server),
-            mainloop_handle,
+            mainloop_handle: Mutex::new(Some(mainloop_handle)),
             indexed_rx: Mutex::new(indexed_rx),
         };
 
@@ -113,7 +113,7 @@ impl RustAnalyzerLsp {
             .await
             .context("LSP initialize failed")?;
         tracing::trace!("Initialized: {init_ret:?}");
-        info!("Initialized");
+        info!("LSP Initialized");
 
         client
             .server
@@ -131,6 +131,27 @@ impl RustAnalyzerLsp {
         });
 
         Ok(client)
+    }
+
+    pub async fn shutdown(&self) -> Result<()> {
+        self.server
+            .lock()
+            .await
+            .shutdown(())
+            .await
+            .context("Sending Shutdown request failed")?;
+        self.server
+            .lock()
+            .await
+            .exit(())
+            .context("Sending Exit notification failed")?;
+
+        // Wait for the mainloop to finish. This implicitly waits for the process to exit.
+        if let Err(e) = self.mainloop_handle.lock().await.take().unwrap().await {
+            tracing::error!("Error joining LSP mainloop task: {:?}", e);
+        }
+
+        Ok(())
     }
 
     #[allow(dead_code)]

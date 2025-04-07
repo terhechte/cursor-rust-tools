@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, RwLock, RwLockWriteGuard};
+use tokio::sync::{RwLock, RwLockWriteGuard};
 
+use crate::cargo_remote::CargoRemote;
 use crate::docs::{Docs, DocsNotification};
 use crate::lsp::LspNotification;
 use crate::mcp::McpNotification;
@@ -23,6 +25,7 @@ pub enum ContextNotification {
     Mcp(McpNotification),
     ProjectAdded(PathBuf),
     ProjectRemoved(PathBuf),
+    ProjectDescriptions(Vec<ProjectDescription>),
 }
 
 impl ContextNotification {
@@ -36,6 +39,7 @@ impl ContextNotification {
             ContextNotification::Mcp(McpNotification::Response { project, .. }) => project.clone(),
             ContextNotification::ProjectAdded(project) => project.clone(),
             ContextNotification::ProjectRemoved(project) => project.clone(),
+            ContextNotification::ProjectDescriptions(_) => PathBuf::from("project_descriptions"),
         }
     }
 
@@ -65,6 +69,7 @@ impl ContextNotification {
             ContextNotification::ProjectRemoved(project) => {
                 format!("Project Removed: {:?}", project)
             }
+            ContextNotification::ProjectDescriptions(_) => "Project Descriptions".to_string(),
         }
     }
 }
@@ -77,6 +82,7 @@ pub struct ProjectContext {
     pub project: Project,
     pub lsp: RustAnalyzerLsp,
     pub docs: Docs,
+    pub cargo_remote: CargoRemote,
     pub is_indexing_lsp: AtomicBool,
     pub is_indexing_docs: AtomicBool,
 }
@@ -113,7 +119,7 @@ impl Context {
                         if let Err(e) = cloned_notifier.send(ContextNotification::Docs(notification.clone())) {
                             tracing::error!("Failed to send docs notification: {}", e);
                         }
-                        let mut projects: RwLockWriteGuard<'_, HashMap<PathBuf, Arc<ProjectContext>>> = cloned_projects.write().unwrap();
+                        let mut projects: RwLockWriteGuard<'_, HashMap<PathBuf, Arc<ProjectContext>>> = cloned_projects.write().await;
                         if let Some(project) = projects.get_mut(project) {
                             project.is_indexing_docs.store(is_indexing, std::sync::atomic::Ordering::Relaxed);
                         }
@@ -122,7 +128,7 @@ impl Context {
                         if let Err(e) = cloned_notifier.send(ContextNotification::Lsp(notification.clone())) {
                             tracing::error!("Failed to send LSP notification: {}", e);
                         }
-                        let mut projects: RwLockWriteGuard<'_, HashMap<PathBuf, Arc<ProjectContext>>> = cloned_projects.write().unwrap();
+                        let mut projects: RwLockWriteGuard<'_, HashMap<PathBuf, Arc<ProjectContext>>> = cloned_projects.write().await;
                         if let Some(project) = projects.get_mut(project) {
                             project.is_indexing_lsp.store(is_indexing, std::sync::atomic::Ordering::Relaxed);
                         }
@@ -162,30 +168,9 @@ impl Context {
         format!("~/{}", CONFIGURATION_FILE)
     }
 
-    pub fn project_descriptions(&self) -> Vec<ProjectDescription> {
-        let projects_map = self
-            .projects
-            .read()
-            .expect("Failed to acquire read lock on projects");
-        projects_map
-            .values()
-            .map(|project| ProjectDescription {
-                root: project.project.root().clone(),
-                name: project
-                    .project
-                    .root()
-                    .file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .to_string(),
-                is_indexing_lsp: project
-                    .is_indexing_lsp
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                is_indexing_docs: project
-                    .is_indexing_docs
-                    .load(std::sync::atomic::Ordering::Relaxed),
-            })
-            .collect()
+    pub async fn project_descriptions(&self) -> Vec<ProjectDescription> {
+        let projects_map = self.projects.read().await;
+        project_descriptions(&projects_map).await
     }
 
     pub fn transport(&self) -> &TransportType {
@@ -202,11 +187,8 @@ impl Context {
         PathBuf::from(parsed)
     }
 
-    fn write_config(&self) -> Result<()> {
-        let projects_map = self
-            .projects
-            .read()
-            .expect("Failed to acquire read lock on projects");
+    async fn write_config(&self) -> Result<()> {
+        let projects_map = self.projects.read().await;
         let projects_to_save: Vec<SerProject> = projects_map
             .values()
             .map(|pc| &pc.project)
@@ -234,7 +216,7 @@ impl Context {
         let config_path = self.config_path();
 
         if !config_path.exists() {
-            tracing::info!(
+            tracing::warn!(
                 "Configuration file not found at {:?}, skipping load.",
                 config_path
             );
@@ -250,7 +232,7 @@ impl Context {
         };
 
         if toml_string.trim().is_empty() {
-            tracing::info!(
+            tracing::warn!(
                 "Configuration file {:?} is empty, skipping load.",
                 config_path
             );
@@ -313,19 +295,17 @@ impl Context {
         let lsp = RustAnalyzerLsp::new(&project, self.lsp_sender.clone()).await?;
         let docs = Docs::new(project.clone(), self.docs_sender.clone())?;
         docs.update_index().await?;
-
+        let cargo_remote = CargoRemote::new(project.clone());
         let project_context = Arc::new(ProjectContext {
             project,
             lsp,
             docs,
+            cargo_remote,
             is_indexing_lsp: AtomicBool::new(true),
             is_indexing_docs: AtomicBool::new(true),
         });
 
-        let mut projects_map = self
-            .projects
-            .write()
-            .expect("Failed to acquire write lock on projects");
+        let mut projects_map = self.projects.write().await;
         projects_map.insert(root.clone(), project_context);
         if let Err(e) = self.notifier.send(ContextNotification::ProjectAdded(root)) {
             tracing::error!("Failed to send project added notification: {}", e);
@@ -334,19 +314,16 @@ impl Context {
         drop(projects_map);
 
         // Write config after successfully adding
-        if let Err(e) = self.write_config() {
+        if let Err(e) = self.write_config().await {
             tracing::error!("Failed to write config after adding project: {}", e);
         }
         Ok(())
     }
 
     /// Remove a project from the context
-    pub fn remove_project(&mut self, root: &PathBuf) -> Option<Arc<ProjectContext>> {
+    pub async fn remove_project(&self, root: &PathBuf) -> Option<Arc<ProjectContext>> {
         let project = {
-            let mut projects_map = self
-                .projects
-                .write()
-                .expect("Failed to acquire write lock on projects");
+            let mut projects_map = self.projects.write().await;
             projects_map.remove(root)
         };
 
@@ -358,31 +335,39 @@ impl Context {
                 tracing::error!("Failed to send project removed notification: {}", e);
             }
             // Write config after successfully removing
-            if let Err(e) = self.write_config() {
+            if let Err(e) = self.write_config().await {
                 tracing::error!("Failed to write config after removing project: {}", e);
             }
         }
         project
     }
 
+    pub fn request_project_descriptions(&self) {
+        let projects = self.projects.clone();
+        let notifier = self.notifier.clone();
+        tokio::spawn(async move {
+            let projects_map = projects.read().await;
+            let project_descriptions = project_descriptions(&projects_map).await;
+            if let Err(e) = notifier.send(ContextNotification::ProjectDescriptions(
+                project_descriptions,
+            )) {
+                tracing::error!("Failed to send project descriptions: {}", e);
+            }
+        });
+    }
+
     /// Get a reference to a project context by its root path
-    pub fn get_project(&self, root: &PathBuf) -> Option<Arc<ProjectContext>> {
-        let projects_map = self
-            .projects
-            .read()
-            .expect("Failed to acquire read lock on projects");
+    pub async fn get_project(&self, root: &PathBuf) -> Option<Arc<ProjectContext>> {
+        let projects_map = self.projects.read().await;
         projects_map.get(root).cloned()
     }
 
     /// Get a reference to a project context by any path within the project
     /// Will traverse up the path hierarchy until it finds a matching project root
-    pub fn get_project_by_path(&self, path: &Path) -> Option<Arc<ProjectContext>> {
+    pub async fn get_project_by_path(&self, path: &Path) -> Option<Arc<ProjectContext>> {
         let mut current_path = path.to_path_buf();
 
-        let projects_map = self
-            .projects
-            .read()
-            .expect("Failed to acquire read lock on projects");
+        let projects_map = self.projects.read().await;
 
         if let Some(project) = projects_map.get(&current_path) {
             return Some(project.clone());
@@ -399,8 +384,9 @@ impl Context {
     }
 
     pub async fn force_index_docs(&self, project: &PathBuf) -> Result<()> {
-        let project_context = self.get_project(project).unwrap();
-        // project_context.docs.update_index().await?;
+        let Some(project_context) = self.get_project(project).await else {
+            return Err(anyhow::anyhow!("Project not found"));
+        };
         let oldval = project_context
             .is_indexing_docs
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -408,6 +394,19 @@ impl Context {
             .is_indexing_docs
             .store(!oldval, std::sync::atomic::Ordering::Relaxed);
         Ok(())
+    }
+
+    pub async fn shutdown_all(&self) {
+        let projects = self.projects.write().await;
+        for p in projects.values() {
+            if let Err(e) = p.lsp.shutdown().await {
+                tracing::error!(
+                    "Failed to shutdown LSP for project {:?}: {}",
+                    p.project.root(),
+                    e
+                );
+            }
+        }
     }
 }
 
@@ -433,6 +432,30 @@ struct SerConfig {
 struct SerProject {
     root: String,
     ignore_crates: Vec<String>,
+}
+
+async fn project_descriptions(
+    projects: &HashMap<PathBuf, Arc<ProjectContext>>,
+) -> Vec<ProjectDescription> {
+    projects
+        .values()
+        .map(|project| ProjectDescription {
+            root: project.project.root().clone(),
+            name: project
+                .project
+                .root()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+            is_indexing_lsp: project
+                .is_indexing_lsp
+                .load(std::sync::atomic::Ordering::Relaxed),
+            is_indexing_docs: project
+                .is_indexing_docs
+                .load(std::sync::atomic::Ordering::Relaxed),
+        })
+        .collect()
 }
 
 #[cfg(test)]
