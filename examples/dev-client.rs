@@ -10,6 +10,9 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let tool = std::env::args()
+        .nth(1)
+        .unwrap_or("symbol_references".to_string());
     let client = ClientBuilder::new(
         ClientSseTransportBuilder::new("http://localhost:4000/sse".to_string()).build(),
     )
@@ -26,16 +29,31 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    let response = client
-        .call_tool(
-            "symbol_references",
-            Some(json!({
-              "file": "/Users/terhechte/Developer/Rust/supatest/src/main.rs",
-              "line": 26,
-              "symbol": "ApiKey"
-            })),
-        )
-        .await?;
+    let response = match tool.as_str() {
+        "symbol_references" => {
+            client
+                .call_tool(
+                    "symbol_references",
+                    Some(json!({
+                      "file": "/Users/terhechte/Developer/Rust/supatest/src/main.rs",
+                      "line": 26,
+                      "symbol": "ApiKey"
+                    })),
+                )
+                .await?
+        }
+        "cargo_check" => {
+            client
+                .call_tool(
+                    "cargo_check",
+                    Some(json!({
+                        "file": "/Users/terhechte/Developer/Rust/supatest/Cargo.toml",
+                    })),
+                )
+                .await?
+        }
+        _ => todo!(),
+    };
     dbg!(&response);
     Ok(())
 }
