@@ -14,6 +14,7 @@ pub enum RustSymbol<'a> {
 }
 
 impl RustSymbol<'_> {
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         match self {
             RustSymbol::Function(name) => format!("fn {}", name),

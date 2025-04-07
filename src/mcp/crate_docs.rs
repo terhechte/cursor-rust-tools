@@ -1,11 +1,7 @@
 use std::sync::Arc;
 
-use crate::{
-    context::{Context, ProjectContext},
-    lsp::format_marked_string,
-};
+use crate::context::{Context, ProjectContext};
 use anyhow::Result;
-use lsp_types::HoverContents;
 use mcp_core::{
     tools::ToolHandlerFn,
     types::{CallToolRequest, CallToolResponse, Tool, ToolResponseContent},
@@ -14,9 +10,7 @@ use serde_json::json;
 
 use super::{
     McpNotification,
-    utils::{
-        RequestExtension, error_response, find_symbol_position_in_file, get_info_from_request,
-    },
+    utils::{error_response, get_info_from_request},
 };
 
 pub struct CrateDocs;
@@ -25,24 +19,20 @@ impl CrateDocs {
     pub fn tool() -> Tool {
         Tool {
             name: "symbol_docs".to_string(),
-            description: Some("Get the documentation for a symbol".to_string()),
+            description: Some("Get the documentation for a cargo dependency".to_string()),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "line": {
-                        "type": "number",
-                        "description": "The line number of the symbol in the file (1 based)"
+                    "dependency": {
+                        "type": "string",
+                        "description": "The name of the cargo dependency to get the documentation for"
                     },
                     "symbol": {
                         "type": "string",
-                        "description": "The name of the symbol to get the documentation for"
+                        "description": "The optional name of a symbol in the documentation. If not provided, the main readme for the dependency will be returned."
                     },
-                    "file": {
-                        "type": "string",
-                        "description": "The absolute path to the file containing the symbol"
-                    }
                 },
-                "required": ["line", "symbol", "file"]
+                "required": ["dependency"]
             }),
         }
     }
@@ -86,38 +76,46 @@ impl CrateDocs {
 
 async fn handle_request(
     project: Arc<ProjectContext>,
-    relative_file: &str,
+    _relative_file: &str,
     request: &CallToolRequest,
 ) -> Result<CallToolResponse, CallToolResponse> {
-    let line = request.get_line()?;
-    let symbol = request.get_symbol()?;
+    let dependency = request
+        .arguments
+        .as_ref()
+        .and_then(|args| args.get("dependency"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| error_response("Dependency is required"))
+        .map(|s| s.to_string())?;
 
-    let position = find_symbol_position_in_file(&project, relative_file, &symbol, line)
-        .await
-        .map_err(|e| error_response(&e))?;
+    let symbol = request
+        .arguments
+        .as_ref()
+        .and_then(|args| args.get("symbol"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
-    let Some(hover) = project
-        .lsp
-        .hover(relative_file, position)
-        .await
-        .map_err(|e| error_response(&e.to_string()))?
-    else {
-        return Err(error_response("No hover information found"));
-    };
-
-    let response = match hover.contents {
-        HoverContents::Scalar(s) => format_marked_string(&s),
-        HoverContents::Array(a) => a
-            .into_iter()
-            .map(|s| format_marked_string(&s))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        HoverContents::Markup(m) => m.value,
-    };
-
-    Ok(CallToolResponse {
-        content: vec![ToolResponseContent::Text { text: response }],
-        is_error: None,
-        meta: None,
-    })
+    if let Some(symbol) = symbol {
+        let docs = project
+            .docs
+            .crate_symbol_docs(&dependency, &symbol)
+            .await
+            .map_err(|e| error_response(&format!("{e:?}")))?;
+        let docs = docs.into_iter().map(|(k, v)| format!("{k}: {v}")).collect();
+        Ok(CallToolResponse {
+            content: vec![ToolResponseContent::Text { text: docs }],
+            is_error: None,
+            meta: None,
+        })
+    } else {
+        let docs = project
+            .docs
+            .crate_docs(&dependency)
+            .await
+            .map_err(|e| error_response(&format!("{e:?}")))?;
+        Ok(CallToolResponse {
+            content: vec![ToolResponseContent::Text { text: docs }],
+            is_error: None,
+            meta: None,
+        })
+    }
 }

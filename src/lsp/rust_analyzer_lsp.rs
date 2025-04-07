@@ -133,6 +133,7 @@ impl RustAnalyzerLsp {
         Ok(client)
     }
 
+    #[allow(dead_code)]
     pub async fn open_file(&self, relative_path: impl AsRef<Path>, text: String) -> Result<()> {
         let uri = self.project.file_uri(relative_path)?;
         self.server

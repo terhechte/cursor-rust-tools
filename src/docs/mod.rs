@@ -86,7 +86,7 @@ impl Docs {
                 "No dependencies found. Please update the docs cache first"
             ));
         }
-        let markdown = index.markdown_docs(&crate_name).unwrap();
+        let markdown = index.markdown_docs(crate_name).unwrap();
         Ok(markdown)
     }
 

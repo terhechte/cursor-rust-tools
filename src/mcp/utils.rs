@@ -113,7 +113,7 @@ pub fn get_file_lines(
     let lines: Vec<&str> = content.lines().collect();
 
     // Calculate actual line range accounting for prefix/suffix
-    let mut start = start_line.saturating_sub(prefix as u32);
+    let start = start_line.saturating_sub(prefix as u32);
     let mut end = end_line.saturating_add(suffix as u32);
 
     if end > lines.len() as u32 {

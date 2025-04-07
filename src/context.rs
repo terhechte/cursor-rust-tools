@@ -15,7 +15,6 @@ use crate::{
 use anyhow::Result;
 use flume::Sender;
 use serde::{Deserialize, Serialize};
-use tokio::task;
 
 #[derive(Debug, Clone)]
 pub enum ContextNotification {
@@ -37,6 +36,35 @@ impl ContextNotification {
             ContextNotification::Mcp(McpNotification::Response { project, .. }) => project.clone(),
             ContextNotification::ProjectAdded(project) => project.clone(),
             ContextNotification::ProjectRemoved(project) => project.clone(),
+        }
+    }
+
+    pub fn description(&self) -> String {
+        match self {
+            ContextNotification::Lsp(LspNotification::Indexing { is_indexing, .. }) => {
+                format!(
+                    "LSP Indexing: {}",
+                    if *is_indexing { "Started" } else { "Finished" }
+                )
+            }
+            ContextNotification::Docs(DocsNotification::Indexing { is_indexing, .. }) => {
+                format!(
+                    "Docs Indexing: {}",
+                    if *is_indexing { "Started" } else { "Finished" }
+                )
+            }
+            ContextNotification::Mcp(McpNotification::Request { content, .. }) => {
+                format!("MCP Request: {:?}", content)
+            }
+            ContextNotification::Mcp(McpNotification::Response { content, .. }) => {
+                format!("MCP Response: {:?}", content)
+            }
+            ContextNotification::ProjectAdded(project) => {
+                format!("Project Added: {:?}", project)
+            }
+            ContextNotification::ProjectRemoved(project) => {
+                format!("Project Removed: {:?}", project)
+            }
         }
     }
 }
@@ -103,7 +131,7 @@ impl Context {
             }
         });
 
-        let context = Self {
+        Self {
             projects,
             transport: TransportType::Sse {
                 host: HOSTNAME.to_string(),
@@ -113,17 +141,7 @@ impl Context {
             docs_sender,
             mcp_sender,
             notifier,
-        };
-
-        // Load config after initial setup
-        // let cloned_context = context.clone();
-        // task::spawn(async move {
-        //     if let Err(e) = cloned_context.load_config().await {
-        //         tracing::error!("Failed to load config on startup: {}", e);
-        //     }
-        // });
-
-        context
+        }
     }
 
     pub fn address_information(&self) -> (String, u16) {

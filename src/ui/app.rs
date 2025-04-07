@@ -1,18 +1,11 @@
-use open;
 use std::{collections::HashMap, path::PathBuf};
 
 use chrono::{DateTime, Utc};
-use egui::{
-    CentralPanel, Color32, Context as EguiContext, Frame, RichText, ScrollArea, SidePanel,
-    TopBottomPanel, Ui,
-};
+use egui::{CentralPanel, Color32, Context as EguiContext, RichText, ScrollArea, SidePanel, Ui};
 use flume::Receiver;
 
 use crate::{
     context::{Context, ContextNotification},
-    docs::DocsNotification,
-    lsp::LspNotification,
-    mcp::McpNotification,
     project::Project,
 };
 
@@ -156,10 +149,7 @@ impl App {
                 .clicked()
             {
                 if let Some(selected_root) = self.selected_project.take() {
-                    self.logs.push(format!(
-                        "Remove Project clicked for: {:?} (removal not implemented)",
-                        selected_root
-                    ));
+                    self.context.remove_project(&selected_root);
                 }
             }
         });
@@ -168,7 +158,6 @@ impl App {
     fn draw_info_tab(&mut self, ui: &mut Ui) {
         let (host, port) = self.context.address_information();
         let config_file = self.context.configuration_file();
-        // TODO: Replace placeholders with actual data and functionality
         ui.label(format!("Address: {}", host));
         ui.label(format!("Port: {}", port));
 
@@ -202,6 +191,7 @@ impl App {
                 .find(|p| p.root == *selected_root)
             {
                 ui.vertical(|ui| {
+                    ui.add_space(10.0);
                     ui.horizontal(|ui| {
                         if ui.button("Update Docs Index").clicked() {
                             if let Some(ref selected_project) = self.selected_project {
@@ -218,6 +208,11 @@ impl App {
                             self.logs
                                 .push(format!("Update Docs Index clicked for: {}", project.name));
                         }
+                        if ui.button("Open Project").clicked() {
+                            if let Err(e) = open::that(project.root.to_string_lossy().to_string()) {
+                                tracing::error!("Failed to open project: {}", e);
+                            }
+                        }
                         ui.add_space(10.0);
                         if project.is_indexing_lsp {
                             ui.add(egui::Spinner::new());
@@ -230,72 +225,60 @@ impl App {
                         }
                     });
 
-                    ui.separator();
+                    // Allocate the remaining available space in the vertical layout
+                    let remaining_space = ui.available_size_before_wrap();
+                    ui.allocate_ui(remaining_space, |ui| {
+                        // Show the dark frame within the allocated space
+                        egui::Frame::dark_canvas(ui.style())
+                            .inner_margin(egui::Margin::same(4)) // Optional: Add padding inside the frame
+                            .show(ui, |ui| {
+                                // Make the ScrollArea fill the frame
+                                ScrollArea::vertical()
+                                    .auto_shrink([false, false]) // Don't shrink, fill space
+                                    .show(ui, |ui| {
+                                        if let Some(project_events) = self.events.get(&project.name)
+                                        {
+                                            let mut event_to_select = None;
+                                            for event_tuple in project_events.iter().rev() {
+                                                if matches!(
+                                                    event_tuple.1,
+                                                    ContextNotification::Lsp(_)
+                                                ) {
+                                                    continue;
+                                                }
+                                                let TimestampedEvent(timestamp, event) =
+                                                    event_tuple;
 
-                    ui.label("Events:");
-                    ScrollArea::vertical().show(ui, |ui| {
-                        if let Some(project_events) = self.events.get(&project.name) {
-                            let mut event_to_select = None;
-                            for event_tuple in project_events.iter().rev() {
-                                let TimestampedEvent(timestamp, event) = event_tuple;
+                                                let timestamp_str =
+                                                    timestamp.format("%H:%M:%S").to_string();
 
-                                let timestamp_str = timestamp.format("%H:%M:%S").to_string();
+                                                let event_details_str = event.description();
 
-                                let event_details_str = match event {
-                                    ContextNotification::Lsp(LspNotification::Indexing {
-                                        ..
-                                    }) => continue,
-                                    ContextNotification::Docs(DocsNotification::Indexing {
-                                        is_indexing,
-                                        ..
-                                    }) => {
-                                        format!(
-                                            "Docs Indexing: {}",
-                                            if *is_indexing { "Started" } else { "Finished" }
-                                        )
-                                    }
-                                    ContextNotification::Mcp(McpNotification::Request {
-                                        content,
-                                        ..
-                                    }) => {
-                                        format!("MCP Request: {:?}", content)
-                                    }
-                                    ContextNotification::Mcp(McpNotification::Response {
-                                        content,
-                                        ..
-                                    }) => {
-                                        format!("MCP Response: {:?}", content)
-                                    }
-                                    ContextNotification::ProjectAdded(project) => {
-                                        format!("Project Added: {:?}", project)
-                                    }
-                                    ContextNotification::ProjectRemoved(project) => {
-                                        format!("Project Removed: {:?}", project)
-                                    }
-                                };
+                                                let full_event_str = format!(
+                                                    "{} - {}",
+                                                    timestamp_str, event_details_str
+                                                );
 
-                                let full_event_str =
-                                    format!("{} - {}", timestamp_str, event_details_str);
+                                                let is_selected = self.selected_event.as_ref()
+                                                    == Some(event_tuple);
 
-                                let is_selected = self.selected_event.as_ref() == Some(event_tuple);
-
-                                let truncated_str = if full_event_str.len() > 120 {
-                                    format!("{}...", &full_event_str[..117])
-                                } else {
-                                    full_event_str
-                                };
-                                let response = ui.selectable_label(is_selected, truncated_str);
-                                if response.clicked() {
-                                    event_to_select = Some(event_tuple.clone());
-                                }
-                                ui.separator();
-                            }
-                            if let Some(selected) = event_to_select {
-                                self.selected_event = Some(selected);
-                            }
-                        } else {
-                            ui.label("No events for this project yet.");
-                        }
+                                                let truncated_str = if full_event_str.len() > 120 {
+                                                    format!("{}...", &full_event_str[..117])
+                                                } else {
+                                                    full_event_str
+                                                };
+                                                let response =
+                                                    ui.selectable_label(is_selected, truncated_str);
+                                                if response.clicked() {
+                                                    event_to_select = Some(event_tuple.clone());
+                                                }
+                                            }
+                                            if let Some(selected) = event_to_select {
+                                                self.selected_event = Some(selected);
+                                            }
+                                        }
+                                    });
+                            });
                     });
                 });
             } else {
@@ -330,7 +313,10 @@ impl App {
             if ui.button("X").on_hover_text("Close").clicked() {
                 self.selected_event = None;
             }
-            ui.heading("Selected Event Details");
+            if ui.button("Copy").on_hover_text("Copy").clicked() {
+                ui.ctx().copy_text(format!("{:#?}", event.1));
+            }
+            ui.heading("Details");
         });
         ui.separator();
 
@@ -434,29 +420,33 @@ impl<'a> ListCell<'a> {
 
         // Draw the content (label and spinner) within the allocated rectangle
         let content_rect = rect.shrink(ui.style().spacing.item_spacing.x); // Add horizontal padding
+        #[allow(deprecated)]
+        let mut content_ui = ui.child_ui(
+            content_rect,
+            egui::Layout::left_to_right(egui::Align::Center),
+            None,
+        );
 
-        ui.allocate_ui_at_rect(content_rect, |ui| {
-            ui.horizontal(|ui| {
-                // Use a simple label, adjust text color if selected
-                let text_color = if self.is_selected {
-                    ui.style().visuals.strong_text_color()
-                } else {
-                    ui.style().visuals.text_color()
-                };
+        content_ui.horizontal(|ui| {
+            // Use a simple label, adjust text color if selected
+            let text_color = if self.is_selected {
+                ui.style().visuals.strong_text_color()
+            } else {
+                ui.style().visuals.text_color()
+            };
 
-                // Create a Label widget and set its sense to Hover only,
-                // so it doesn't steal clicks from the parent response.
-                let label = egui::Label::new(RichText::new(self.text).color(text_color))
-                    .sense(egui::Sense::hover());
-                ui.add(label);
+            // Create a Label widget and set its sense to Hover only,
+            // so it doesn't steal clicks from the parent response.
+            let label = egui::Label::new(RichText::new(self.text).color(text_color))
+                .sense(egui::Sense::hover());
+            ui.add(label);
 
-                // Align spinner to the right
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if self.is_spinning {
-                        // Use the same text_color for the spinner for consistency
-                        ui.add(egui::Spinner::new().color(text_color));
-                    }
-                });
+            // Align spinner to the right
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.is_spinning {
+                    // Use the same text_color for the spinner for consistency
+                    ui.add(egui::Spinner::new().color(text_color));
+                }
             });
         });
 

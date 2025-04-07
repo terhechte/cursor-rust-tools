@@ -64,7 +64,7 @@ impl fmt::Display for ToStringVisitor<'_> {
     }
 }
 
-impl<'a> tracing::field::Visit for ToStringVisitor<'a> {
+impl tracing::field::Visit for ToStringVisitor<'_> {
     fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
         self.0
             .insert(field.name(), format_args!("{}", value).to_string());
