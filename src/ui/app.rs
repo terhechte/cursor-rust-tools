@@ -47,7 +47,11 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(context: Context, receiver: Receiver<ContextNotification>) -> Self {
+    pub fn new(
+        context: Context,
+        receiver: Receiver<ContextNotification>,
+        project_descriptions: Vec<ProjectDescription>,
+    ) -> Self {
         Self {
             context,
             receiver,
@@ -56,20 +60,28 @@ impl App {
             events: HashMap::new(),
             selected_sidebar_tab: SidebarTab::Projects,
             selected_event: None,
-            project_descriptions: Vec::new(),
+            project_descriptions,
         }
     }
 
     fn handle_notifications(&mut self) -> bool {
         let mut has_new_events = false;
         while let Ok(notification) = self.receiver.try_recv() {
+            // Order is important here. New projects came in
+            if let ContextNotification::ProjectDescriptions(project_descriptions) = notification {
+                self.project_descriptions = project_descriptions;
+                has_new_events = true;
+                continue;
+            }
+
+            // If its not a new project notification, request projects
+            self.context.request_project_descriptions();
+
+            // If its a lsp, ignore because there's a lot of them
             if matches!(notification, ContextNotification::Lsp(_)) {
                 continue;
             }
-            if let ContextNotification::ProjectDescriptions(project_descriptions) = notification {
-                self.project_descriptions = project_descriptions;
-                continue;
-            }
+            // Otherwise, we have a new event
             has_new_events = true;
             tracing::debug!("Received notification: {:?}", notification);
             let project_path = notification.notification_path();
@@ -83,12 +95,12 @@ impl App {
                 .entry(project_name)
                 .or_default()
                 .push(timestamped_event);
-            self.context.request_project_descriptions();
         }
         has_new_events
     }
 
     fn draw_left_sidebar(&mut self, ui: &mut Ui, project_descriptions: &[ProjectDescription]) {
+        ui.add_space(10.0);
         ui.columns(2, |columns| {
             columns[0].selectable_value(
                 &mut self.selected_sidebar_tab,
@@ -193,6 +205,7 @@ impl App {
 
     fn draw_main_area(&mut self, ui: &mut Ui, project_descriptions: &[ProjectDescription]) {
         if let Some(selected_root) = &self.selected_project {
+            let config_path = PathBuf::from(selected_root).join(".cursor/mcp.json");
             if let Some(project) = project_descriptions
                 .iter()
                 .find(|p| p.root == *selected_root)
@@ -220,6 +233,17 @@ impl App {
                                 tracing::error!("Failed to open project: {}", e);
                             }
                         }
+                        if !config_path.exists()
+                            && ui
+                                .button("Install mcp.json")
+                                .on_hover_text("Create a .cursor/mcp.json file in the project root")
+                                .clicked()
+                        {
+                            let config = self.context.mcp_configuration();
+                            if let Err(e) = create_mcp_configuration_file(&project.root, config) {
+                                tracing::error!("Failed to create mcp.json: {}", e);
+                            }
+                        }
                         ui.add_space(10.0);
                         if project.is_indexing_lsp {
                             ui.add(egui::Spinner::new());
@@ -237,7 +261,8 @@ impl App {
                     ui.allocate_ui(remaining_space, |ui| {
                         // Show the dark frame within the allocated space
                         egui::Frame::dark_canvas(ui.style())
-                            .inner_margin(egui::Margin::same(4)) // Optional: Add padding inside the frame
+                            .fill(Color32::from_black_alpha(128))
+                            .inner_margin(egui::Margin::same(4))
                             .show(ui, |ui| {
                                 // Make the ScrollArea fill the frame
                                 ScrollArea::vertical()
@@ -297,7 +322,8 @@ impl App {
             }
         } else {
             ui.centered_and_justified(|ui| {
-                ui.label("Select a project from the left sidebar");
+                ui.label("Select or add a project");
+                ui.label("Added projects first need to be indexed for LSP and Docs before they can be used.");
             });
             if self.selected_event.is_some() {
                 self.selected_event = None;
@@ -445,6 +471,7 @@ impl<'a> ListCell<'a> {
             // Create a Label widget and set its sense to Hover only,
             // so it doesn't steal clicks from the parent response.
             let label = egui::Label::new(RichText::new(self.text).color(text_color))
+                .selectable(false)
                 .sense(egui::Sense::hover());
             ui.add(label);
 
@@ -473,4 +500,11 @@ fn find_root_project(mut path: &Path, projects: &[ProjectDescription]) -> Option
     }
 
     None
+}
+
+fn create_mcp_configuration_file(path: &Path, contents: String) -> anyhow::Result<()> {
+    let config_path = PathBuf::from(path).join(".cursor/mcp.json");
+    std::fs::create_dir_all(&config_path)?;
+    std::fs::write(config_path, contents)?;
+    Ok(())
 }

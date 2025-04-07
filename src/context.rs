@@ -307,16 +307,19 @@ impl Context {
 
         let mut projects_map = self.projects.write().await;
         projects_map.insert(root.clone(), project_context);
-        if let Err(e) = self.notifier.send(ContextNotification::ProjectAdded(root)) {
-            tracing::error!("Failed to send project added notification: {}", e);
-        }
-
         drop(projects_map);
+
+        self.request_project_descriptions();
 
         // Write config after successfully adding
         if let Err(e) = self.write_config().await {
             tracing::error!("Failed to write config after adding project: {}", e);
         }
+
+        if let Err(e) = self.notifier.send(ContextNotification::ProjectAdded(root)) {
+            tracing::error!("Failed to send project added notification: {}", e);
+        }
+
         Ok(())
     }
 
