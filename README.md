@@ -1,3 +1,6 @@
+<img src="media/icon.png" width="150" height="149" />
+
+
 # Cursor Rust Tools
 
 A **MCP** server for cursor (and potentially other editors) to give them access to Rust
@@ -80,8 +83,17 @@ One the app is running, you can configure Cursor to use it. This requires multip
 2. As soon as you save that file, Cursor will detect that a new MCP server has been added and ask you to enable it. (in a dialog in the bottom right).
 3. You can check the Cursor settings (under `MCP`) to see where it is working correctly
 4. To test, make sure you have `Agent Mode` selected in the current `Chat`. And then you can ask it to utilize one of the new tools, for example the `cargo_check` tool.
+5. [You might want to add cursor rules to tell the LLM to prefer using these tools whenever possible. I'm still experimenting with this.](https://docs.cursor.com/context/rules-for-ai)
 
 ![media/cursor.png](media/cursor.png)
 
 **The contents of all the `mcp.json` is the same. Cursor Rust Tools figures out the correct project via
 the filepath**
+
+## Open Todos
+
+- [ ] Create a [Zed](https://zed.dev) extension to allow using this
+- [ ] Proper shutdown without errors
+- [ ] Removing a project is a bit frail right now (in the UI)
+- [ ] Expose more LSP commands
+- [ ] Allow the LLM to perform [Grit operations](https://docs.grit.io/patterns#Miscellaneous)
