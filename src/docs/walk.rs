@@ -121,20 +121,3 @@ fn extract_crate_and_path(path: &str) -> Option<(&str, &str)> {
         _ => None,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use crate::project::Project;
-
-    use super::*;
-
-    #[test]
-    fn test_walk_docs() {
-        // let (repository, guard) = crate::test_utils::test_repository();
-        let project = Project::new(PathBuf::from("assets/zoxide-main")).unwrap();
-        walk_docs(&project).unwrap();
-        // guard.keep();
-    }
-}

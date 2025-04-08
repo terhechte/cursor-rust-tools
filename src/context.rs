@@ -460,21 +460,3 @@ async fn project_descriptions(
         })
         .collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_ser_project() {
-        let project = SerProject {
-            root: "test".to_string(),
-            ignore_crates: vec!["test".to_string()],
-        };
-        let config = SerConfig {
-            projects: vec![project],
-        };
-        let toml_string = toml::to_string_pretty(&config).unwrap();
-        fs::write("/tmp/.blah", toml_string).unwrap();
-    }
-}

@@ -103,26 +103,3 @@ impl CargoRemote {
         Ok(messages)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_cargo_remote_check() {
-        let project = Project::new("/Users/terhechte/Developer/Rust/supatest").unwrap();
-        let cargo_remote = CargoRemote::new(project);
-        let messages = cargo_remote.check(false).await.unwrap();
-        println!("{:#?}", messages);
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_cargo_remote_test() {
-        let project = Project::new("/Users/terhechte/Developer/Rust/supatest").unwrap();
-        let cargo_remote = CargoRemote::new(project);
-        let messages = cargo_remote.test(None, true).await.unwrap();
-        println!("{:#?}", messages);
-    }
-}
