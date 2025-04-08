@@ -3,8 +3,8 @@
 
 # Cursor Rust Tools
 
-A **MCP** server for cursor (and potentially other editors) to give them access to Rust
-documentation and Rust analyzer.
+A [MCP](https://www.anthropic.com/news/model-context-protocol) server to allow the LLM in Cursor to 
+access Rust Analyzer, Crate Docs and Cargo Commands.
 
 Includes an UI for configuration.
 
