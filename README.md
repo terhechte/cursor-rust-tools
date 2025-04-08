@@ -37,26 +37,26 @@ For the LSP functionality `src/lsp` it spins up a new Rust Analyzer that indexes
 For documentation, it will run `cargo docs` and then parse the html documentation into markdown locally.
 This information is stored in the project root in the `.docs-cache` folder.
 
-## Running it
+## Installation
 
 ```sh
-git clone ...
+cargo install --git https://github.com/terhechte/cursor-rust-tools
 ```
 
-### With UI
+### Run With UI
 
 ``` sh
-cargo run --release
+cursor-rust-tools
 ```
 
 This will bring up a UI in which you can add projects, install the `mcp.json` and see the activity.
 
-### Without UI
+### Run Without UI
 
 Alternatively, once you have a `~/.cursor-rust-tools` set up with projects, you can also just run it via
 
 ``` sh
-cargo run --release -- --no-ui
+cursor-rust-tools --no-ui
 ```
 
 ## Configuration
