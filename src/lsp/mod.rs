@@ -1,3 +1,4 @@
+mod change_notifier;
 mod client_state;
 mod rust_analyzer_lsp;
 mod utils;

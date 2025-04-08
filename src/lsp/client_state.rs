@@ -11,7 +11,11 @@ use lsp_types::{
 };
 
 // Old and new token names.
-const RA_INDEXING_TOKENS: &[&str] = &["rustAnalyzer/Indexing", "rustAnalyzer/cachePriming"];
+const RA_INDEXING_TOKENS: &[&str] = &[
+    "rustAnalyzer/Indexing",
+    "rustAnalyzer/cachePriming",
+    "rustAnalyzer/Building",
+];
 
 pub struct ClientState {
     project: PathBuf,
@@ -47,13 +51,8 @@ impl LanguageClient for ClientState {
                 tracing::error!("Failed to send indexing notification: {}", e);
             }
 
-            // Send a notification without consuming the sender
             if let Some(tx) = &self.indexed_tx {
-                // Use try_send or send_async depending on whether you want it to be blocking
-                // or potentially fail if the channel is full (though capacity is 1 here).
-                // try_send is likely fine if the receiver is waiting.
                 if let Err(e) = tx.try_send(()) {
-                    // Log if sending fails (e.g., channel full or disconnected)
                     tracing::error!("Failed to send indexing completion signal: {}", e);
                 }
             }

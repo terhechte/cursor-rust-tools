@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use async_lsp::concurrency::ConcurrencyLayer;
@@ -21,6 +22,7 @@ use tokio::task::JoinHandle;
 use tower::ServiceBuilder;
 use tracing::{debug, info};
 
+use super::change_notifier::ChangeNotifier;
 use super::client_state::ClientState;
 use crate::lsp::LspNotification;
 use crate::project::Project;
@@ -29,10 +31,12 @@ use flume::Sender;
 #[derive(Debug)]
 pub struct RustAnalyzerLsp {
     project: Project,
-    server: Mutex<ServerSocket>,
+    server: Arc<Mutex<ServerSocket>>,
     #[allow(dead_code)] // Keep the handle to ensure the mainloop runs
     mainloop_handle: Mutex<Option<JoinHandle<()>>>,
     indexed_rx: Mutex<flume::Receiver<()>>,
+    #[allow(dead_code)] // Keep the handle to ensure the change notifier runs
+    change_notifier: ChangeNotifier,
 }
 
 impl RustAnalyzerLsp {
@@ -69,11 +73,18 @@ impl RustAnalyzerLsp {
             }
         });
 
+        let server = Arc::new(Mutex::new(server));
+
+        // Get the current runtime handle
+        let handle = tokio::runtime::Handle::current();
+        let change_notifier = ChangeNotifier::new(server.clone(), project, handle)?;
+
         let client = Self {
             project: project.clone(),
-            server: Mutex::new(server),
+            server,
             mainloop_handle: Mutex::new(Some(mainloop_handle)),
             indexed_rx: Mutex::new(indexed_rx),
+            change_notifier,
         };
 
         // Initialize.
