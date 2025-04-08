@@ -3,6 +3,10 @@ name = "cursor-rust-tools"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "cursor-rust-tools"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = "1.0.97"
 async-lsp = "0.2.2"
@@ -10,12 +14,10 @@ async-process = "2.3.0"
 flume = "0.11.1"
 futures = "0.3.31"
 lsp-types = "0.95.1"
-#mcp-core = { version = "0.1.43", features = ["sse"] }
-#mcp-core = { path = "/Users/terhechte/Developer/temporary/mcp-core/mcp-core", features = ["sse"]}
 mcp-core = { git = "https://github.com/terhechte/mcp-core", branch = "allow-tool-context", features = ["sse"]}
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
-tokio = { version = "1.44.1", features = ["full"] }
+tokio = { version = "1.44", features = ["full"] }
 tower = "0.5.2"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
@@ -30,13 +32,9 @@ ignore = "0.4.23"
 html2md = "0.2.15"
 egui = "0.31"
 eframe = "0.31"
-#catppuccin-egui = { version = "5.5.0", default-features = false, features = ["egui31"] }
 lazy_static = "1.5.0"
 egui-aesthetix = { git = "https://github.com/thebashpotato/egui-aesthetix", features = ["all_themes"]}
 rfd = "0.15.3"
 open = "5"
 shellexpand = "3.1.0"
 chrono = "0.4.40"
-
-[dev-dependencies]
-mcp_client_rs = "0.1.7"
