@@ -8,7 +8,6 @@ mod ui;
 
 use std::env::args;
 
-use crate::ui::App;
 use anyhow::Result;
 use context::Context as ContextType;
 use mcp::run_server;
@@ -17,7 +16,7 @@ use tracing::{error, info};
 use tracing_subscriber::{
     EnvFilter, Layer, fmt::format::PrettyFields, layer::SubscriberExt, util::SubscriberInitExt,
 };
-use ui::apply_theme;
+use ui::run_ui;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -103,30 +102,4 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn run_ui(
-    context: context::Context,
-    receiver: flume::Receiver<context::ContextNotification>,
-    project_descriptions: Vec<ui::ProjectDescription>,
-) -> Result<()> {
-    // Configure eframe options (window title, size, etc.)
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1100.0, 800.0]) // Default window size
-            .with_min_inner_size([400.0, 300.0]), // Minimum window size
-        ..Default::default()
-    };
-
-    let app = App::new(context, receiver, project_descriptions);
-
-    eframe::run_native(
-        "Cursor Rust Tools",
-        options,
-        Box::new(|cc| {
-            apply_theme(&cc.egui_ctx);
-            Ok(Box::new(app))
-        }),
-    )
-    .map_err(|e| anyhow::anyhow!("Failed to run eframe: {}", e))
 }

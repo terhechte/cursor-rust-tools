@@ -79,6 +79,7 @@ impl App {
 
             // If its a lsp, ignore because there's a lot of them
             if matches!(notification, ContextNotification::Lsp(_)) {
+                has_new_events = true;
                 continue;
             }
             // Otherwise, we have a new event
