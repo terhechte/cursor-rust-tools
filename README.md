@@ -34,9 +34,11 @@ For the LSP functionality `src/lsp` it spins up a new Rust Analyzer that indexes
 For documentation, it will run `cargo docs` and then parse the html documentation into markdown locally.
 This information is stored in the project root in the `.docs-cache` folder.
 
-
-
 ## Running it
+
+```sh
+git clone ...
+```
 
 ### With UI
 
