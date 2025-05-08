@@ -1,7 +1,7 @@
 <img src="media/icon.png" width="150" height="149" />
 
 
-# Cursor Rust Tools
+# Cursor Rust Tools (Windows-Compatible Build)
 
 A [MCP](https://www.anthropic.com/news/model-context-protocol) server to allow the LLM in Cursor to 
 access Rust Analyzer, Crate Docs and Cargo Commands.
