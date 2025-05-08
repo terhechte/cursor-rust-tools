@@ -1,5 +1,4 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
-
 use anyhow::Result;
 use async_lsp::{LanguageServer, ServerSocket};
 use lsp_types::{DidChangeWatchedFilesParams, FileChangeType, FileEvent};
@@ -8,13 +7,12 @@ use notify_debouncer_mini::{
 };
 use tokio::{runtime::Handle, sync::Mutex};
 use url::Url;
-
 use crate::project::Project;
 
 #[derive(Debug)]
 pub struct ChangeNotifier {
     #[allow(dead_code)] // Keep the handle to ensure the change notifier runs
-    debouncer: Debouncer<FsEventWatcher>,
+    debouncer: Debouncer<RecommendedWatcher>,
 }
 
 impl ChangeNotifier {
@@ -34,7 +32,6 @@ impl ChangeNotifier {
                 Err(e) => tracing::error!("Error {:?}", e),
             },
         )?;
-
         // We watch the root folder
         debouncer
             .watcher()
