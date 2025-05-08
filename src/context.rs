@@ -165,7 +165,7 @@ impl Context {
     }
 
     pub fn configuration_file(&self) -> String {
-        format!("~/{}", CONFIGURATION_FILE)
+        PathBuf::from("~").join(CONFIGURATION_FILE).to_string_lossy().into_owned()
     }
 
     pub async fn project_descriptions(&self) -> Vec<ProjectDescription> {

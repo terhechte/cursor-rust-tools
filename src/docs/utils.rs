@@ -97,7 +97,7 @@ pub fn get_cargo_dependencies(project: &crate::project::Project) -> Result<Vec<(
                     .iter()
                     .filter_map(|p| p.as_str())
                     .flat_map(|pattern| {
-                        let p = format!("{}/{}", project.root().display(), pattern);
+                        let p = project.root().join(pattern).display().to_string();
                         glob::glob(&p)
                             .map(|paths| paths.collect::<Vec<_>>())
                             .unwrap_or_else(|_| vec![Ok(PathBuf::from(p))])

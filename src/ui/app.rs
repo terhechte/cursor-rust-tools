@@ -206,7 +206,7 @@ impl App {
 
     fn draw_main_area(&mut self, ui: &mut Ui, project_descriptions: &[ProjectDescription]) {
         if let Some(selected_root) = &self.selected_project {
-            let config_path = PathBuf::from(selected_root).join(".cursor/mcp.json");
+            let config_path = PathBuf::from(selected_root).join(".cursor").join("mcp.json");
             if let Some(project) = project_descriptions
                 .iter()
                 .find(|p| p.root == *selected_root)
@@ -504,7 +504,7 @@ fn find_root_project(mut path: &Path, projects: &[ProjectDescription]) -> Option
 }
 
 fn create_mcp_configuration_file(path: &Path, contents: String) -> anyhow::Result<()> {
-    let config_path = PathBuf::from(path).join(".cursor/mcp.json");
+    let config_path = PathBuf::from(path).join(".cursor").join("mcp.json");
     std::fs::create_dir_all(&config_path)?;
     std::fs::write(config_path, contents)?;
     Ok(())
