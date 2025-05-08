@@ -40,7 +40,7 @@ This information is stored in the project root in the `.docs-cache` folder.
 ## Installation
 
 ```sh
-cargo install --git https://github.com/igarox/cursor-rust-tools-window
+cargo install --git https://github.com/igarox/cursor-rust-tools-windows
 ```
 
 ### Run With UI
