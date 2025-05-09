@@ -55,6 +55,57 @@ impl RustAnalyzerLsp {
                 ))
         });
 
+        // First check if rust-analyzer is available
+        let is_installed = match tokio::process::Command::new("rust-analyzer")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn() {
+                Ok(_) => true,
+                Err(_) => false,
+            };
+
+        if !is_installed {
+            // Attempt to install rust-analyzer using rustup if available
+            tracing::warn!("rust-analyzer not found in PATH. Attempting to install...");
+            
+            let rustup_check = tokio::process::Command::new("rustup")
+                .arg("--version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+                
+            let rustup_available = rustup_check.is_ok();
+                
+            if rustup_available {
+                tracing::info!("Installing rust-analyzer with rustup...");
+                match tokio::process::Command::new("rustup")
+                    .args(["component", "add", "rust-analyzer"])
+                    .output()
+                    .await {
+                        Ok(output) if output.status.success() => {
+                            tracing::info!("Successfully installed rust-analyzer");
+                        },
+                        Ok(_) => {
+                            tracing::error!("Failed to install rust-analyzer with rustup");
+                            return Err(anyhow::anyhow!(
+                                "Failed to install rust-analyzer automatically. Please install it manually with 'rustup component add rust-analyzer'"
+                            ));
+                        },
+                        Err(e) => {
+                            tracing::error!("Error running rustup: {}", e);
+                            return Err(anyhow::anyhow!(
+                                "Failed to run rustup to install rust-analyzer: {}. Please install it manually.", e
+                            ));
+                        }
+                    }
+            } else {
+                return Err(anyhow::anyhow!(
+                    "rust-analyzer not found. Please install rustup and run 'rustup component add rust-analyzer', or install rust-analyzer manually."
+                ));
+            }
+        }
+
+        // Now attempt to spawn rust-analyzer
         let process = match async_process::Command::new("rust-analyzer")
             .current_dir(project.root())
             .stdin(Stdio::piped())
