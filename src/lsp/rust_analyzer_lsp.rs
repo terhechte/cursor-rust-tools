@@ -55,13 +55,19 @@ impl RustAnalyzerLsp {
                 ))
         });
 
-        let process = async_process::Command::new("rust-analyzer")
+        let process = match async_process::Command::new("rust-analyzer")
             .current_dir(project.root())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
-            .spawn()
-            .context("Failed run rust-analyzer")?;
+            .spawn() {
+                Ok(process) => process,
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to run rust-analyzer: {}. Please make sure rust-analyzer is installed and available in your PATH.", e
+                    ));
+                }
+            };
 
         let stdout = process.stdout.context("Failed to get stdout")?;
         let stdin = process.stdin.context("Failed to get stdin")?;

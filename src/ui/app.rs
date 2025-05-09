@@ -191,7 +191,27 @@ impl App {
             ui.small("Place this in your .cursor/mcp.json file");
 
             if ui.button("Open Conf").clicked() {
-                if let Err(e) = open::that(shellexpand::tilde(&config_file).to_string()) {
+                let config_path = shellexpand::tilde(&config_file).to_string();
+                let path = std::path::Path::new(&config_path);
+                
+                // Create parent directory if it doesn't exist
+                if let Some(parent) = path.parent() {
+                    if !parent.exists() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            tracing::error!("Failed to create config directory: {}", e);
+                        }
+                    }
+                }
+                
+                // Try to create an empty file if it doesn't exist
+                if !path.exists() {
+                    if let Err(e) = std::fs::write(path, "") {
+                        tracing::error!("Failed to create empty config file: {}", e);
+                    }
+                }
+                
+                // Now try to open it
+                if let Err(e) = open::that(&config_path) {
                     tracing::error!("Failed to open config file: {}", e);
                 }
             }
@@ -504,8 +524,9 @@ fn find_root_project(mut path: &Path, projects: &[ProjectDescription]) -> Option
 }
 
 fn create_mcp_configuration_file(path: &Path, contents: String) -> anyhow::Result<()> {
-    let config_path = PathBuf::from(path).join(".cursor").join("mcp.json");
-    std::fs::create_dir_all(&config_path)?;
+    let cursor_dir = PathBuf::from(path).join(".cursor");
+    std::fs::create_dir_all(&cursor_dir)?;
+    let config_path = cursor_dir.join("mcp.json");
     std::fs::write(config_path, contents)?;
     Ok(())
 }
