@@ -144,15 +144,29 @@ impl App {
                     tracing::debug!("Adding project: {:?}", path_buf);
 
                     let context = self.context.clone();
+                    
+                    // Add Projects directly without Project::new to handle any path issues
                     tokio::spawn(async move {
-                        if let Err(e) = context
-                            .add_project(Project {
-                                root: path_buf,
-                                ignore_crates: vec![],
-                            })
-                            .await
-                        {
+                        // First check if path exists
+                        if !path_buf.exists() {
+                            tracing::error!("Selected path doesn't exist: {:?}", path_buf);
+                            return;
+                        }
+
+                        // Create Project struct directly
+                        let project = Project {
+                            root: path_buf.clone(),
+                            ignore_crates: vec![],
+                        };
+
+                        if let Err(e) = context.add_project(project).await {
                             tracing::error!("Failed to add project: {}", e);
+                            
+                            // Add specific Windows error messages
+                            if cfg!(windows) && e.to_string().contains("find the file specified") {
+                                tracing::error!("Windows path error: Make sure the folder exists and has no special characters");
+                                tracing::error!("You selected: {:?}", path_buf);
+                            }
                         } else {
                             tracing::debug!("Project added successfully.");
                         }

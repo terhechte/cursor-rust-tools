@@ -307,15 +307,36 @@ impl Context {
     /// Add a new project to the context
     pub async fn add_project(&self, project: Project) -> Result<()> {
         let root = project.root().clone();
+        
+        // Validate the path exists and is valid
+        if !root.exists() {
+            return Err(anyhow::anyhow!("Project root does not exist: {:?}", root));
+        }
+        
+        // Check if it's already in the map
         if self.projects.read().await.contains_key(&root) {
             return Err(anyhow::anyhow!("Project already exists"));
         }
 
-        // Create the LSP client
-        let lsp = RustAnalyzerLsp::new(&project, self.lsp_sender.clone()).await?;
+        // Try to create the LSP client, with helpful Windows error messages
+        let lsp = match RustAnalyzerLsp::new(&project, self.lsp_sender.clone()).await {
+            Ok(lsp) => lsp,
+            Err(e) => {
+                if cfg!(windows) {
+                    tracing::error!("Failed to initialize LSP for Windows path: {:?}", root);
+                    tracing::error!("Windows paths may need special handling: {}", e);
+                }
+                return Err(anyhow::anyhow!("Failed to initialize LSP: {}", e));
+            }
+        };
 
         // Create the docs client
-        let docs = Docs::new(&project, self.docs_sender.clone())?;
+        let docs = match Docs::new(&project, self.docs_sender.clone()) {
+            Ok(docs) => docs,
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to initialize Docs client: {}", e));
+            }
+        };
 
         let cargo_remote = CargoRemote::default();
 
