@@ -58,8 +58,36 @@ pub fn parse_rust_symbol(filename: &str) -> Option<RustSymbol> {
 pub fn get_cargo_dependencies(project: &crate::project::Project) -> Result<Vec<(String, String)>> {
     let mut dependencies = Vec::new();
     let cargo_path = project.root().join("Cargo.toml");
-    let cargo_content = fs::read_to_string(&cargo_path)?;
-    let cargo_toml: Value = toml::from_str(&cargo_content)?;
+    
+    // Check if Cargo.toml exists first
+    if !cargo_path.exists() {
+        tracing::error!("Cargo.toml not found at path: {:?}", cargo_path);
+        // Return empty dependencies instead of error to allow projects without Cargo.toml
+        return Ok(Vec::new());
+    }
+    
+    // Read the Cargo.toml file with better error handling
+    let cargo_content = match fs::read_to_string(&cargo_path) {
+        Ok(content) => content,
+        Err(e) => {
+            tracing::error!("Failed to read Cargo.toml at {:?}: {}", cargo_path, e);
+            if cfg!(windows) {
+                tracing::error!("Windows path issue: Check if path contains special characters or spaces");
+            }
+            // Return empty dependencies instead of error
+            return Ok(Vec::new());
+        }
+    };
+    
+    // Parse the TOML with better error handling
+    let cargo_toml: Value = match toml::from_str(&cargo_content) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            tracing::error!("Failed to parse Cargo.toml: {}", e);
+            // Return empty dependencies instead of error
+            return Ok(Vec::new());
+        }
+    };
 
     // Helper function to extract dependencies and versions
     fn extract_deps(table: &Value) -> Vec<(String, String)> {
@@ -98,9 +126,13 @@ pub fn get_cargo_dependencies(project: &crate::project::Project) -> Result<Vec<(
                     .filter_map(|p| p.as_str())
                     .flat_map(|pattern| {
                         let p = project.root().join(pattern).display().to_string();
-                        glob::glob(&p)
-                            .map(|paths| paths.collect::<Vec<_>>())
-                            .unwrap_or_else(|_| vec![Ok(PathBuf::from(p))])
+                        match glob::glob(&p) {
+                            Ok(paths) => paths.collect::<Vec<_>>(),
+                            Err(e) => {
+                                tracing::warn!("Error in glob pattern '{}': {}", p, e);
+                                vec![Ok(PathBuf::from(p))]
+                            }
+                        }
                     })
                     .collect::<Vec<_>>()
             })
@@ -113,14 +145,30 @@ pub fn get_cargo_dependencies(project: &crate::project::Project) -> Result<Vec<(
     // Parse dependencies from each member
     for member_path in members {
         let Ok(member_path) = member_path else {
-            tracing::error!("Error: {:?}", member_path);
+            tracing::error!("Error processing workspace member: {:?}", member_path);
             continue;
         };
         let member_cargo_path = member_path.join("Cargo.toml");
         if member_cargo_path.exists() {
-            tracing::debug!("Member path: {:?}", member_path);
-            let member_content = fs::read_to_string(member_cargo_path)?;
-            let member_toml: Value = toml::from_str(&member_content)?;
+            tracing::debug!("Processing member: {:?}", member_path);
+            
+            // Read the member's Cargo.toml with error handling
+            let member_content = match fs::read_to_string(&member_cargo_path) {
+                Ok(content) => content,
+                Err(e) => {
+                    tracing::error!("Failed to read member Cargo.toml at {:?}: {}", member_cargo_path, e);
+                    continue;
+                }
+            };
+            
+            // Parse the member's TOML with error handling
+            let member_toml: Value = match toml::from_str(&member_content) {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    tracing::error!("Failed to parse member Cargo.toml at {:?}: {}", member_cargo_path, e);
+                    continue;
+                }
+            };
 
             // Get dependencies from different sections
             if let Some(deps) = member_toml.get("dependencies") {
@@ -129,7 +177,7 @@ pub fn get_cargo_dependencies(project: &crate::project::Project) -> Result<Vec<(
             if let Some(dev_deps) = member_toml.get("dev-dependencies") {
                 dependencies.extend(extract_deps(dev_deps));
             }
-            if let Some(target) = cargo_toml.get("target") {
+            if let Some(target) = member_toml.get("target") {
                 if let Some(target_table) = target.as_table() {
                     for target_cfg in target_table.values() {
                         if let Some(target_deps) = target_cfg.get("dependencies") {
@@ -144,6 +192,8 @@ pub fn get_cargo_dependencies(project: &crate::project::Project) -> Result<Vec<(
     // Deduplicate dependencies (keep last occurrence)
     dependencies.sort_by(|a, b| a.0.cmp(&b.0));
     dependencies.dedup_by(|a, b| a.0 == b.0);
+    
+    tracing::debug!("Found {} dependencies", dependencies.len());
     Ok(dependencies)
 }
 

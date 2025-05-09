@@ -28,10 +28,78 @@ pub struct Docs {
 
 impl Docs {
     pub fn new(project: &Project, notifier: Sender<DocsNotification>) -> Result<Self> {
-        let index = Mutex::new(index::DocsIndex::new(project)?);
+        // First check if the project directory exists
+        if !project.root().exists() {
+            return Err(anyhow::anyhow!(
+                "Project root does not exist: {:?}",
+                project.root()
+            ));
+        }
+
+        // Try to create cache directory if it doesn't exist
+        let cache_dir = project.cache_dir();
+        if !cache_dir.exists() {
+            match std::fs::create_dir_all(&cache_dir) {
+                Ok(_) => tracing::debug!("Created cache directory: {:?}", cache_dir),
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to create docs cache directory at {:?}: {}",
+                        cache_dir,
+                        e
+                    );
+                    if cfg!(windows) {
+                        tracing::error!("Windows path issue: Check if path contains special characters or spaces");
+                    }
+                    // Continue anyway, DocsIndex::new will also try to create the directory
+                }
+            }
+        }
+
+        // Try to initialize the index with robust error handling
+        let index = match index::DocsIndex::new(project) {
+            Ok(idx) => idx,
+            Err(e) => {
+                tracing::warn!("Failed to create docs index: {}", e);
+                // Instead of creating a malformed index directly, let's create a fallback
+                let cache_path = cache_dir.join("docs_cache.json");
+                if !cache_path.exists() {
+                    // Create an empty cache file
+                    let empty_cache = walk::DocsCache::default();
+                    if let Err(write_err) = std::fs::write(
+                        &cache_path,
+                        serde_json::to_string(&empty_cache).unwrap_or_default(),
+                    ) {
+                        tracing::error!("Failed to write empty cache file: {}", write_err);
+                    }
+                }
+                // Try one more time with empty dependencies
+                match index::DocsIndex::new(project) {
+                    Ok(idx) => idx,
+                    Err(e2) => {
+                        tracing::error!("Still failed to create index on retry: {}", e2);
+                        return Err(anyhow::anyhow!("Could not initialize docs index: {}", e));
+                    }
+                }
+            }
+        };
+
         Ok(Self {
             project: project.clone(),
-            index: Arc::new(index),
+            index: Arc::new(Mutex::new(index)),
+            notifier,
+        })
+    }
+
+    /// Create a minimal docs instance with an empty index for when normal initialization fails
+    pub fn new_empty(project: &Project, notifier: Sender<DocsNotification>) -> Result<Self> {
+        tracing::warn!("Creating minimal docs client with empty index");
+        
+        // Use the new_empty constructor for DocsIndex
+        let index = index::DocsIndex::new_empty();
+        
+        Ok(Self {
+            project: project.clone(),
+            index: Arc::new(Mutex::new(index)),
             notifier,
         })
     }

@@ -145,15 +145,25 @@ impl App {
 
                     let context = self.context.clone();
                     
-                    // Add Projects directly without Project::new to handle any path issues
                     tokio::spawn(async move {
-                        // First check if path exists
+                        // Extra validation before creating Project
                         if !path_buf.exists() {
                             tracing::error!("Selected path doesn't exist: {:?}", path_buf);
                             return;
                         }
+                        
+                        // Try to create the .docs-cache directory before adding the project
+                        // This helps verify we have write permissions to the folder
+                        let cache_dir = path_buf.join(".docs-cache");
+                        if !cache_dir.exists() {
+                            if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+                                tracing::error!("Failed to create .docs-cache directory: {}", e);
+                                tracing::error!("This may indicate permission issues with the selected folder.");
+                                return;
+                            }
+                        }
 
-                        // Create Project struct directly
+                        // Create Project struct directly but with additional validation
                         let project = Project {
                             root: path_buf.clone(),
                             ignore_crates: vec![],
@@ -162,10 +172,16 @@ impl App {
                         if let Err(e) = context.add_project(project).await {
                             tracing::error!("Failed to add project: {}", e);
                             
-                            // Add specific Windows error messages
-                            if cfg!(windows) && e.to_string().contains("find the file specified") {
-                                tracing::error!("Windows path error: Make sure the folder exists and has no special characters");
-                                tracing::error!("You selected: {:?}", path_buf);
+                            // More detailed Windows error messages
+                            if cfg!(windows) {
+                                if e.to_string().contains("find the file specified") {
+                                    tracing::error!("Windows path error: Make sure the folder exists and has no special characters");
+                                    tracing::error!("You selected: {:?}", path_buf);
+                                    tracing::error!("Try selecting a folder with a simpler path and no special characters");
+                                } else if e.to_string().contains("Failed to initialize Docs") {
+                                    tracing::error!("Failed to initialize documentation system");
+                                    tracing::error!("Check if you have write permissions to create the .docs-cache folder");
+                                }
                             }
                         } else {
                             tracing::debug!("Project added successfully.");

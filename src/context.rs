@@ -330,11 +330,27 @@ impl Context {
             }
         };
 
-        // Create the docs client
+        // Create the docs client - but don't fail if it can't be created
         let docs = match Docs::new(&project, self.docs_sender.clone()) {
             Ok(docs) => docs,
             Err(e) => {
-                return Err(anyhow::anyhow!("Failed to initialize Docs client: {}", e));
+                // Create a default Docs instance to avoid failing the entire project addition
+                tracing::warn!("Failed to initialize Docs client: {}. Creating empty docs client.", e);
+                
+                // Try to create cache dir if needed
+                let cache_dir = project.cache_dir();
+                if !cache_dir.exists() {
+                    let _ = std::fs::create_dir_all(&cache_dir);
+                }
+                
+                // Create default docs to avoid stopping project setup
+                match Docs::new_empty(&project, self.docs_sender.clone()) {
+                    Ok(docs) => docs,
+                    Err(e2) => {
+                        tracing::error!("Failed to create fallback docs client: {}", e2);
+                        return Err(anyhow::anyhow!("Failed to initialize Docs client: {}", e));
+                    }
+                }
             }
         };
 

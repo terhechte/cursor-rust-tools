@@ -183,8 +183,6 @@ impl RustAnalyzerLsp {
                     
                     if cfg!(windows) {
                         // Try to locate rust-analyzer in standard Windows locations
-                        tracing::info!("Trying to locate rust-analyzer.exe in standard Windows paths");
-                        
                         let mut rust_analyzer_path = None;
                         
                         // Check in .cargo/bin
@@ -306,21 +304,59 @@ impl RustAnalyzerLsp {
     }
 
     pub async fn shutdown(&self) -> Result<()> {
-        self.server
-            .lock()
-            .await
-            .shutdown(())
-            .await
-            .context("Sending Shutdown request failed")?;
-        self.server
-            .lock()
-            .await
-            .exit(())
-            .context("Sending Exit notification failed")?;
+        // Try to acquire the lock with a timeout to avoid deadlock
+        let server_lock_result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            self.server.lock()
+        ).await;
 
-        // Wait for the mainloop to finish. This implicitly waits for the process to exit.
-        if let Err(e) = self.mainloop_handle.lock().await.take().unwrap().await {
-            tracing::error!("Error joining LSP mainloop task: {:?}", e);
+        // Handle timeout or lock acquisition errors
+        let mut server_guard = match server_lock_result {
+            Ok(guard) => guard,
+            Err(_) => {
+                tracing::warn!("Timeout acquiring server lock during shutdown");
+                // Return success since this isn't fatal
+                return Ok(());
+            }
+        };
+
+        // Try shutdown but don't fail if it errors
+        if let Err(e) = server_guard.shutdown(()).await {
+            tracing::warn!("Error during LSP shutdown request: {:?}", e);
+            // Continue with exit anyway
+        }
+
+        // Try exit but don't fail if it errors
+        if let Err(e) = server_guard.exit(()) {
+            tracing::warn!("Error during LSP exit notification: {:?}", e);
+        }
+
+        // Release server lock before waiting for mainloop
+        drop(server_guard);
+
+        // Try to get the mainloop handle with a timeout
+        let mainloop_lock_result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            self.mainloop_handle.lock()
+        ).await;
+
+        // Handle timeout or lock acquisition errors for mainloop handle
+        match mainloop_lock_result {
+            Ok(mut guard) => {
+                // Only join if there's a handle to take
+                if let Some(handle) = guard.take() {
+                    // Don't wait indefinitely - use a timeout
+                    match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
+                        Ok(join_result) => {
+                            if let Err(e) = join_result {
+                                tracing::warn!("Error joining LSP mainloop task: {:?}", e);
+                            }
+                        },
+                        Err(_) => tracing::warn!("Timeout waiting for LSP mainloop to finish"),
+                    }
+                }
+            },
+            Err(_) => tracing::warn!("Timeout acquiring mainloop handle lock during shutdown"),
         }
 
         Ok(())
