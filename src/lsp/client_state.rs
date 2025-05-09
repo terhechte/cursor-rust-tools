@@ -36,24 +36,36 @@ impl LanguageClient for ClientState {
             ProgressParamsValue::WorkDone(WorkDoneProgress::End(_))
         );
         if is_indexing && !is_work_done {
-            if let Err(e) = self.notifier.send(LspNotification::Indexing {
+            if let Err(e) = self.notifier.try_send(LspNotification::Indexing {
                 project: self.project.clone(),
                 is_indexing: true,
             }) {
-                tracing::error!("Failed to send indexing notification: {}", e);
+                if matches!(e, flume::TrySendError::Disconnected(_)) {
+                    tracing::debug!("Channel closed when sending indexing start: {}", e);
+                } else {
+                    tracing::error!("Failed to send indexing notification: {}", e);
+                }
             }
         }
         if is_indexing && is_work_done {
-            if let Err(e) = self.notifier.send(LspNotification::Indexing {
+            if let Err(e) = self.notifier.try_send(LspNotification::Indexing {
                 project: self.project.clone(),
                 is_indexing: false,
             }) {
-                tracing::error!("Failed to send indexing notification: {}", e);
+                if matches!(e, flume::TrySendError::Disconnected(_)) {
+                    tracing::debug!("Channel closed when sending indexing end: {}", e);
+                } else {
+                    tracing::error!("Failed to send indexing notification: {}", e);
+                }
             }
 
             if let Some(tx) = &self.indexed_tx {
                 if let Err(e) = tx.try_send(()) {
-                    tracing::error!("Failed to send indexing completion signal: {}", e);
+                    if matches!(e, flume::TrySendError::Disconnected(_)) {
+                        tracing::debug!("Channel closed when sending indexing completion: {}", e);
+                    } else {
+                        tracing::error!("Failed to send indexing completion signal: {}", e);
+                    }
                 }
             }
         }

@@ -111,13 +111,23 @@ impl Context {
             loop {
                 tokio::select! {
                     Ok(notification) = mcp_receiver.recv_async() => {
-                        if let Err(e) = cloned_notifier.send(ContextNotification::Mcp(notification)) {
-                            tracing::error!("Failed to send MCP notification: {}", e);
+                        if let Err(e) = cloned_notifier.try_send(ContextNotification::Mcp(notification)) {
+                            if matches!(e, flume::TrySendError::Disconnected(_)) {
+                                tracing::debug!("Channel closed when forwarding MCP notification");
+                                break; // Exit the loop if the channel is disconnected
+                            } else {
+                                tracing::error!("Failed to send MCP notification: {}", e);
+                            }
                         }
                     }
                     Ok(ref notification @ DocsNotification::Indexing { ref project, is_indexing }) = docs_receiver.recv_async() => {
-                        if let Err(e) = cloned_notifier.send(ContextNotification::Docs(notification.clone())) {
-                            tracing::error!("Failed to send docs notification: {}", e);
+                        if let Err(e) = cloned_notifier.try_send(ContextNotification::Docs(notification.clone())) {
+                            if matches!(e, flume::TrySendError::Disconnected(_)) {
+                                tracing::debug!("Channel closed when forwarding Docs notification");
+                                break; // Exit the loop if the channel is disconnected
+                            } else {
+                                tracing::error!("Failed to send docs notification: {}", e);
+                            }
                         }
                         let mut projects: RwLockWriteGuard<'_, HashMap<PathBuf, Arc<ProjectContext>>> = cloned_projects.write().await;
                         if let Some(project) = projects.get_mut(project) {
@@ -125,8 +135,13 @@ impl Context {
                         }
                     }
                     Ok(ref notification @ LspNotification::Indexing { ref project, is_indexing }) = lsp_receiver.recv_async() => {
-                        if let Err(e) = cloned_notifier.send(ContextNotification::Lsp(notification.clone())) {
-                            tracing::error!("Failed to send LSP notification: {}", e);
+                        if let Err(e) = cloned_notifier.try_send(ContextNotification::Lsp(notification.clone())) {
+                            if matches!(e, flume::TrySendError::Disconnected(_)) {
+                                tracing::debug!("Channel closed when forwarding LSP notification");
+                                break; // Exit the loop if the channel is disconnected
+                            } else {
+                                tracing::error!("Failed to send LSP notification: {}", e);
+                            }
                         }
                         let mut projects: RwLockWriteGuard<'_, HashMap<PathBuf, Arc<ProjectContext>>> = cloned_projects.write().await;
                         if let Some(project) = projects.get_mut(project) {
@@ -369,9 +384,14 @@ impl Context {
         self.projects.write().await.insert(root.clone(), context);
 
         // Send a notification that the project has been added
-        self.notifier
-            .send(ContextNotification::ProjectAdded(root.clone()))
-            .map_err(|e| anyhow::anyhow!("Failed to send notification: {}", e))?;
+        if let Err(e) = self.notifier.try_send(ContextNotification::ProjectAdded(root.clone())) {
+            if matches!(e, flume::TrySendError::Disconnected(_)) {
+                tracing::debug!("Channel closed when sending project added notification");
+            } else {
+                tracing::error!("Failed to send notification: {}", e);
+                return Err(anyhow::anyhow!("Failed to send notification: {}", e));
+            }
+        }
 
         // Write config after successfully adding
         if let Err(e) = self.write_config(&root).await {
@@ -392,11 +412,12 @@ impl Context {
         };
 
         if project.is_some() {
-            if let Err(e) = self
-                .notifier
-                .send(ContextNotification::ProjectRemoved(root.clone()))
-            {
-                tracing::error!("Failed to send project removed notification: {}", e);
+            if let Err(e) = self.notifier.try_send(ContextNotification::ProjectRemoved(root.clone())) {
+                if matches!(e, flume::TrySendError::Disconnected(_)) {
+                    tracing::debug!("Channel closed when sending project removed notification");
+                } else {
+                    tracing::error!("Failed to send project removed notification: {}", e);
+                }
             }
             // Write config after successfully removing
             if let Err(e) = self.write_config(root).await {
@@ -412,10 +433,14 @@ impl Context {
         tokio::spawn(async move {
             let projects_map = projects.read().await;
             let project_descriptions = project_descriptions(&projects_map).await;
-            if let Err(e) = notifier.send(ContextNotification::ProjectDescriptions(
+            if let Err(e) = notifier.try_send(ContextNotification::ProjectDescriptions(
                 project_descriptions,
             )) {
-                tracing::error!("Failed to send project descriptions: {}", e);
+                if matches!(e, flume::TrySendError::Disconnected(_)) {
+                    tracing::debug!("Channel closed when sending project descriptions");
+                } else {
+                    tracing::error!("Failed to send project descriptions: {}", e);
+                }
             }
         });
     }

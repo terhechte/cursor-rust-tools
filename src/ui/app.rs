@@ -77,25 +77,44 @@ impl App {
             // If its not a new project notification, request projects
             self.context.request_project_descriptions();
 
-            // If its a lsp, ignore because there's a lot of them
-            if matches!(notification, ContextNotification::Lsp(_)) {
+            // Filter out high-volume LSP notifications but allow indexing notifications through
+            if let ContextNotification::Lsp(lsp) = &notification {
+                // Let indexing notifications through to update the UI spinner
+                if matches!(lsp, crate::lsp::LspNotification::Indexing { .. }) {
+                    has_new_events = true;
+                    tracing::debug!("Received LSP indexing notification: {:?}", notification);
+                    let project_path = notification.notification_path();
+                    let Some(project) = find_root_project(&project_path, &self.project_descriptions) else {
+                        tracing::error!("Project not found: {:?}", project_path);
+                        continue;
+                    };
+                    let project_name = project.file_name().unwrap().to_string_lossy().to_string();
+                    let timestamped_event = TimestampedEvent(Utc::now(), notification);
+                    self.events
+                        .entry(project_name)
+                        .or_default()
+                        .push(timestamped_event);
+                } else {
+                    // Filter out other high-volume LSP notifications
+                    has_new_events = true;
+                    continue;
+                }
+            } else {
+                // Otherwise, we have a new event
                 has_new_events = true;
-                continue;
+                tracing::debug!("Received notification: {:?}", notification);
+                let project_path = notification.notification_path();
+                let Some(project) = find_root_project(&project_path, &self.project_descriptions) else {
+                    tracing::error!("Project not found: {:?}", project_path);
+                    continue;
+                };
+                let project_name = project.file_name().unwrap().to_string_lossy().to_string();
+                let timestamped_event = TimestampedEvent(Utc::now(), notification);
+                self.events
+                    .entry(project_name)
+                    .or_default()
+                    .push(timestamped_event);
             }
-            // Otherwise, we have a new event
-            has_new_events = true;
-            tracing::debug!("Received notification: {:?}", notification);
-            let project_path = notification.notification_path();
-            let Some(project) = find_root_project(&project_path, &self.project_descriptions) else {
-                tracing::error!("Project not found: {:?}", project_path);
-                continue;
-            };
-            let project_name = project.file_name().unwrap().to_string_lossy().to_string();
-            let timestamped_event = TimestampedEvent(Utc::now(), notification);
-            self.events
-                .entry(project_name)
-                .or_default()
-                .push(timestamped_event);
         }
         has_new_events
     }
@@ -325,11 +344,11 @@ impl App {
                                         {
                                             let mut event_to_select = None;
                                             for event_tuple in project_events.iter().rev() {
-                                                if matches!(
-                                                    event_tuple.1,
-                                                    ContextNotification::Lsp(_)
-                                                ) {
-                                                    continue;
+                                                // Only filter out non-indexing LSP notifications
+                                                if let ContextNotification::Lsp(lsp) = &event_tuple.1 {
+                                                    if !matches!(lsp, crate::lsp::LspNotification::Indexing { .. }) {
+                                                        continue;
+                                                    }
                                                 }
                                                 let TimestampedEvent(timestamp, event) =
                                                     event_tuple;
