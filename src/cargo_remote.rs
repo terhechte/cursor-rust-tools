@@ -38,6 +38,19 @@ pub struct CargoRemote {
     repository: Project,
 }
 
+impl Default for CargoRemote {
+    fn default() -> Self {
+        // Create a dummy project for the default implementation
+        // This will be replaced when properly initialized
+        Self {
+            repository: Project {
+                root: std::path::PathBuf::new(),
+                ignore_crates: Vec::new(),
+            },
+        }
+    }
+}
+
 impl CargoRemote {
     pub fn new(repository: Project) -> Self {
         Self { repository }

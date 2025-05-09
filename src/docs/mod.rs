@@ -27,10 +27,10 @@ pub struct Docs {
 }
 
 impl Docs {
-    pub fn new(project: Project, notifier: Sender<DocsNotification>) -> Result<Self> {
-        let index = Mutex::new(index::DocsIndex::new(&project)?);
+    pub fn new(project: &Project, notifier: Sender<DocsNotification>) -> Result<Self> {
+        let index = Mutex::new(index::DocsIndex::new(project)?);
         Ok(Self {
-            project,
+            project: project.clone(),
             index: Arc::new(index),
             notifier,
         })

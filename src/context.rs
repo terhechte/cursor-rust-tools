@@ -164,8 +164,8 @@ impl Context {
             .replace("{{PORT}}", &port.to_string())
     }
 
-    pub fn configuration_file(&self) -> String {
-        PathBuf::from("~").join(CONFIGURATION_FILE).to_string_lossy().into_owned()
+    pub fn configuration_file(&self, project_root: &Path) -> String {
+        PathBuf::from(project_root).join(CONFIGURATION_FILE).to_string_lossy().into_owned()
     }
 
     pub async fn project_descriptions(&self) -> Vec<ProjectDescription> {
@@ -182,12 +182,11 @@ impl Context {
         Ok(())
     }
 
-    fn config_path(&self) -> PathBuf {
-        let parsed = shellexpand::tilde(&self.configuration_file()).to_string();
-        PathBuf::from(parsed)
+    fn config_path(&self, project_root: &Path) -> PathBuf {
+        PathBuf::from(project_root).join(CONFIGURATION_FILE)
     }
 
-    async fn write_config(&self) -> Result<()> {
+    async fn write_config(&self, project_root: &Path) -> Result<()> {
         let projects_map = self.projects.read().await;
         let projects_to_save: Vec<SerProject> = projects_map
             .values()
@@ -201,7 +200,7 @@ impl Context {
             projects: projects_to_save,
         };
 
-        let config_path = self.config_path();
+        let config_path = self.config_path(project_root);
 
         let toml_string = toml::to_string_pretty(&config)?;
         if let Some(parent) = config_path.parent() {
@@ -212,8 +211,8 @@ impl Context {
         Ok(())
     }
 
-    pub async fn load_config(&self) -> Result<()> {
-        let config_path = self.config_path();
+    pub async fn load_config(&self, project_root: &Path) -> Result<()> {
+        let config_path = self.config_path(project_root);
 
         if !config_path.exists() {
             tracing::warn!(
@@ -292,33 +291,42 @@ impl Context {
     /// Add a new project to the context
     pub async fn add_project(&self, project: Project) -> Result<()> {
         let root = project.root().clone();
+        if self.projects.read().await.contains_key(&root) {
+            return Err(anyhow::anyhow!("Project already exists"));
+        }
+
+        // Create the LSP client
         let lsp = RustAnalyzerLsp::new(&project, self.lsp_sender.clone()).await?;
-        let docs = Docs::new(project.clone(), self.docs_sender.clone())?;
-        docs.update_index().await?;
-        let cargo_remote = CargoRemote::new(project.clone());
-        let project_context = Arc::new(ProjectContext {
+
+        // Create the docs client
+        let docs = Docs::new(&project, self.docs_sender.clone())?;
+
+        let cargo_remote = CargoRemote::default();
+
+        // Insert the project context
+        let context = Arc::new(ProjectContext {
             project,
             lsp,
             docs,
             cargo_remote,
-            is_indexing_lsp: AtomicBool::new(true),
-            is_indexing_docs: AtomicBool::new(true),
+            is_indexing_lsp: AtomicBool::new(false),
+            is_indexing_docs: AtomicBool::new(false),
         });
 
-        let mut projects_map = self.projects.write().await;
-        projects_map.insert(root.clone(), project_context);
-        drop(projects_map);
+        self.projects.write().await.insert(root.clone(), context);
 
-        self.request_project_descriptions();
+        // Send a notification that the project has been added
+        self.notifier
+            .send(ContextNotification::ProjectAdded(root.clone()))
+            .map_err(|e| anyhow::anyhow!("Failed to send notification: {}", e))?;
 
         // Write config after successfully adding
-        if let Err(e) = self.write_config().await {
+        if let Err(e) = self.write_config(&root).await {
             tracing::error!("Failed to write config after adding project: {}", e);
         }
 
-        if let Err(e) = self.notifier.send(ContextNotification::ProjectAdded(root)) {
-            tracing::error!("Failed to send project added notification: {}", e);
-        }
+        // Send a notification with the updated project descriptions
+        self.request_project_descriptions();
 
         Ok(())
     }
@@ -338,7 +346,7 @@ impl Context {
                 tracing::error!("Failed to send project removed notification: {}", e);
             }
             // Write config after successfully removing
-            if let Err(e) = self.write_config().await {
+            if let Err(e) = self.write_config(root).await {
                 tracing::error!("Failed to write config after removing project: {}", e);
             }
         }

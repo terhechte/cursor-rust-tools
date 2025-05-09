@@ -37,7 +37,10 @@ async fn main() -> Result<()> {
 
     let (sender, receiver) = flume::unbounded();
     let context = ContextType::new(4000, sender).await;
-    context.load_config().await?;
+    
+    // Get the current directory to use as the project root for configuration
+    let current_dir = std::env::current_dir()?;
+    context.load_config(&current_dir).await?;
 
     let final_context = context.clone();
 
@@ -54,7 +57,8 @@ async fn main() -> Result<()> {
                 context.address_information().0,
                 context.address_information().1
             );
-            info!("Configuration file: {}", context.configuration_file());
+            let current_dir = std::env::current_dir()?;
+            info!("Configuration file: {}", context.configuration_file(&current_dir));
             if context.project_descriptions().await.is_empty() {
                 error!(
                     "No projects found, please run without `--no-ui` or edit configuration file"

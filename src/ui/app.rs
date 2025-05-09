@@ -177,7 +177,11 @@ impl App {
 
     fn draw_info_tab(&mut self, ui: &mut Ui) {
         let (host, port) = self.context.address_information();
-        let config_file = self.context.configuration_file();
+        
+        // Use current directory for config file path
+        let current_dir = std::env::current_dir().unwrap_or_default();
+        let config_file = self.context.configuration_file(&current_dir);
+        
         ui.label(format!("Address: {}", host));
         ui.label(format!("Port: {}", port));
 
@@ -191,8 +195,7 @@ impl App {
             ui.small("Place this in your .cursor/mcp.json file");
 
             if ui.button("Open Conf").clicked() {
-                let config_path = shellexpand::tilde(&config_file).to_string();
-                let path = std::path::Path::new(&config_path);
+                let path = std::path::Path::new(&config_file);
                 
                 // Create parent directory if it doesn't exist
                 if let Some(parent) = path.parent() {
@@ -211,13 +214,12 @@ impl App {
                 }
                 
                 // Now try to open it
-                if let Err(e) = open::that(&config_path) {
+                if let Err(e) = open::that(&config_file) {
                     tracing::error!("Failed to open config file: {}", e);
                 }
             }
             if ui.button("Copy Conf Path").clicked() {
-                let path = shellexpand::tilde(&config_file).to_string();
-                ui.ctx().copy_text(path);
+                ui.ctx().copy_text(config_file.clone());
             }
             ui.small(&config_file);
             ui.small("To manually edit projects");
