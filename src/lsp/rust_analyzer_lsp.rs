@@ -112,10 +112,45 @@ impl RustAnalyzerLsp {
                 match install_result {
                     Ok(output) if output.status.success() => {
                         tracing::info!("Successfully installed rust-analyzer");
+                        
+                        // Verify installation was successful by checking if command works now
+                        let verify_success = match tokio::process::Command::new("rust-analyzer")
+                            .arg("--version") 
+                            .output()
+                            .await {
+                                Ok(output) if output.status.success() => true,
+                                _ => false,
+                            };
+                            
+                        if !verify_success {
+                            // On Windows, we might need to check for rust-analyzer.exe
+                            if cfg!(windows) {
+                                tracing::warn!("rust-analyzer command still not working, checking rust-analyzer.exe path");
+                                
+                                // Try to locate the rust-analyzer binary in the user's .cargo/bin directory
+                                let home_dir = dirs::home_dir();
+                                if let Some(home) = home_dir {
+                                    let cargo_bin = home.join(".cargo").join("bin").join("rust-analyzer.exe");
+                                    
+                                    if cargo_bin.exists() {
+                                        tracing::info!("Found rust-analyzer at: {:?}", cargo_bin);
+                                    } else {
+                                        tracing::warn!("rust-analyzer.exe not found at expected path: {:?}", cargo_bin);
+                                    }
+                                }
+                                
+                                // Provide clearer error messages for Windows users
+                                tracing::info!("On Windows, you might need to run: rustup component add rust-analyzer --toolchain stable-x86_64-pc-windows-msvc");
+                            }
+                        }
                     },
                     Ok(output) => {
                         let error = String::from_utf8_lossy(&output.stderr);
                         tracing::error!("Failed to install rust-analyzer with rustup: {}", error);
+                        // Handle the common "Unknown binary" error on Windows
+                        if error.contains("Unknown binary") && error.contains("rust-analyzer") {
+                            tracing::info!("Specific Windows solution: Try running 'rustup component add rust-analyzer --toolchain stable-x86_64-pc-windows-msvc'");
+                        }
                         return Err(anyhow::anyhow!(
                             "Failed to install rust-analyzer automatically: {}. Please install it manually with 'rustup component add rust-analyzer'", 
                             error
@@ -143,9 +178,49 @@ impl RustAnalyzerLsp {
             .spawn() {
                 Ok(process) => process,
                 Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Failed to run rust-analyzer: {}. Please make sure rust-analyzer is installed and available in your PATH.", e
-                    ));
+                    // First attempt failed, try to locate rust-analyzer in standard paths
+                    tracing::warn!("Failed to run rust-analyzer directly: {}", e);
+                    
+                    if cfg!(windows) {
+                        // Try to locate rust-analyzer in standard Windows locations
+                        tracing::info!("Trying to locate rust-analyzer.exe in standard Windows paths");
+                        
+                        let mut rust_analyzer_path = None;
+                        
+                        // Check in .cargo/bin
+                        if let Some(home_dir) = dirs::home_dir() {
+                            let cargo_bin_path = home_dir.join(".cargo").join("bin").join("rust-analyzer.exe");
+                            if cargo_bin_path.exists() {
+                                tracing::info!("Found rust-analyzer.exe at: {:?}", cargo_bin_path);
+                                rust_analyzer_path = Some(cargo_bin_path);
+                            }
+                        }
+                        
+                        if let Some(path) = rust_analyzer_path {
+                            match async_process::Command::new(path)
+                                .current_dir(project.root())
+                                .stdin(Stdio::piped())
+                                .stdout(Stdio::piped())
+                                .stderr(Stdio::inherit())
+                                .spawn() {
+                                    Ok(process) => process,
+                                    Err(e) => {
+                                        return Err(anyhow::anyhow!(
+                                            "Failed to run rust-analyzer from found path: {}. Try manually installing with 'rustup component add rust-analyzer --toolchain stable-x86_64-pc-windows-msvc'", e
+                                        ));
+                                    }
+                                }
+                        } else {
+                            return Err(anyhow::anyhow!(
+                                "Could not locate rust-analyzer executable. Please run 'rustup component add rust-analyzer --toolchain stable-x86_64-pc-windows-msvc' to install it."
+                            ));
+                        }
+                    } else {
+                        // For non-Windows platforms, just report the original error
+                        return Err(anyhow::anyhow!(
+                            "Failed to run rust-analyzer: {}. Please make sure rust-analyzer is installed and available in your PATH.", e
+                        ));
+                    }
                 }
             };
 

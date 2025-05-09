@@ -1115,6 +1115,7 @@ dependencies = [
  "async-lsp",
  "async-process",
  "chrono",
+ "dirs",
  "eframe",
  "egui",
  "egui-aesthetix",

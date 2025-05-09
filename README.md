@@ -75,6 +75,18 @@ ignore_crates = []
 
 `ignore_crates` is a list of crate dependency names that you don't want to be indexed for documentation. For example because they're too big.
 
+### Windows Path Handling
+
+On Windows, paths in the configuration file should use forward slashes instead of backslashes to avoid TOML parsing issues:
+
+``` toml
+[[projects]]
+root = "C:/Users/Username/Documents/RustProject"
+ignore_crates = []
+```
+
+The application will automatically handle the conversion between slash types when needed.
+
 ## Configuring Cursor
 
 One the app is running, you can configure Cursor to use it. This requires multiple steps.

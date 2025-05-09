@@ -238,19 +238,34 @@ impl Context {
             return Ok(());
         }
 
+        // First try to parse normally
         let loaded_config: SerConfig = match toml::from_str(&toml_string) {
             Ok(config) => config,
             Err(e) => {
-                tracing::error!(
-                    "Failed to parse TOML from config file {:?}: {}",
+                tracing::warn!(
+                    "Failed to parse TOML from config file {:?}: {}. Attempting to fix Windows paths...",
                     config_path,
                     e
                 );
-                // Don't return error here, maybe the file is corrupt but we can continue
-                return Ok(());
+                
+                // Try to fix Windows paths by escaping backslashes
+                // This handles manually edited config files with Windows paths
+                let fixed_toml = toml_string.replace("\\", "\\\\");
+                match toml::from_str(&fixed_toml) {
+                    Ok(config) => config,
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to parse TOML after fixing paths in config file {:?}: {}",
+                            config_path,
+                            e
+                        );
+                        // Don't return error here, maybe the file is corrupt but we can continue
+                        return Ok(());
+                    }
+                }
             }
         };
-
+        
         for project in loaded_config.projects {
             let project = Project {
                 // PathBuf automatically handles forward slashes correctly on all platforms
