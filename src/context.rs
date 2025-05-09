@@ -192,7 +192,7 @@ impl Context {
             .values()
             .map(|pc| &pc.project)
             .map(|p| SerProject {
-                root: p.root().to_string_lossy().to_string(),
+                root: p.root().to_string_lossy().to_string().replace('\\', "/"),
                 ignore_crates: p.ignore_crates().to_vec(),
             })
             .collect();
@@ -253,6 +253,7 @@ impl Context {
 
         for project in loaded_config.projects {
             let project = Project {
+                // PathBuf automatically handles forward slashes correctly on all platforms
                 root: PathBuf::from(&project.root),
                 ignore_crates: project.ignore_crates,
             };
@@ -441,6 +442,7 @@ struct SerConfig {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct SerProject {
+    // Paths are stored with forward slashes for cross-platform compatibility
     root: String,
     ignore_crates: Vec<String>,
 }

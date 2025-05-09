@@ -55,18 +55,18 @@ impl RustAnalyzerLsp {
                 ))
         });
 
-        // First check if rust-analyzer is available
+        // Check if rust-analyzer is available AND works correctly
         let is_installed = match tokio::process::Command::new("rust-analyzer")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn() {
-                Ok(_) => true,
-                Err(_) => false,
+            .arg("--version")  // Try to run with --version to check if it really works
+            .output()
+            .await {
+                Ok(output) if output.status.success() => true,
+                _ => false,  // Command exists but fails or doesn't exist at all
             };
 
         if !is_installed {
             // Attempt to install rust-analyzer using rustup if available
-            tracing::warn!("rust-analyzer not found in PATH. Attempting to install...");
+            tracing::warn!("rust-analyzer not found or not working properly. Attempting to install...");
             
             let rustup_check = tokio::process::Command::new("rustup")
                 .arg("--version")
@@ -78,26 +78,56 @@ impl RustAnalyzerLsp {
                 
             if rustup_available {
                 tracing::info!("Installing rust-analyzer with rustup...");
-                match tokio::process::Command::new("rustup")
-                    .args(["component", "add", "rust-analyzer"])
+                
+                // First try to detect the current toolchain
+                let current_toolchain = match tokio::process::Command::new("rustup")
+                    .args(["show", "active-toolchain"])
                     .output()
                     .await {
                         Ok(output) if output.status.success() => {
-                            tracing::info!("Successfully installed rust-analyzer");
+                            let toolchain = String::from_utf8_lossy(&output.stdout)
+                                .split_whitespace()
+                                .next()
+                                .map(|s| s.to_string());
+                            tracing::info!("Detected current toolchain: {:?}", toolchain);
+                            toolchain
                         },
-                        Ok(_) => {
-                            tracing::error!("Failed to install rust-analyzer with rustup");
-                            return Err(anyhow::anyhow!(
-                                "Failed to install rust-analyzer automatically. Please install it manually with 'rustup component add rust-analyzer'"
-                            ));
-                        },
-                        Err(e) => {
-                            tracing::error!("Error running rustup: {}", e);
-                            return Err(anyhow::anyhow!(
-                                "Failed to run rustup to install rust-analyzer: {}. Please install it manually.", e
-                            ));
-                        }
+                        _ => None,
+                    };
+                
+                // Command with toolchain if detected
+                let install_result = if let Some(toolchain) = current_toolchain {
+                    tokio::process::Command::new("rustup")
+                        .args(["component", "add", "rust-analyzer", "--toolchain", &toolchain])
+                        .output()
+                        .await
+                } else {
+                    // Fallback to generic command
+                    tokio::process::Command::new("rustup")
+                        .args(["component", "add", "rust-analyzer"])
+                        .output()
+                        .await
+                };
+                
+                match install_result {
+                    Ok(output) if output.status.success() => {
+                        tracing::info!("Successfully installed rust-analyzer");
+                    },
+                    Ok(output) => {
+                        let error = String::from_utf8_lossy(&output.stderr);
+                        tracing::error!("Failed to install rust-analyzer with rustup: {}", error);
+                        return Err(anyhow::anyhow!(
+                            "Failed to install rust-analyzer automatically: {}. Please install it manually with 'rustup component add rust-analyzer'", 
+                            error
+                        ));
+                    },
+                    Err(e) => {
+                        tracing::error!("Error running rustup: {}", e);
+                        return Err(anyhow::anyhow!(
+                            "Failed to run rustup to install rust-analyzer: {}. Please install it manually.", e
+                        ));
                     }
+                }
             } else {
                 return Err(anyhow::anyhow!(
                     "rust-analyzer not found. Please install rustup and run 'rustup component add rust-analyzer', or install rust-analyzer manually."
@@ -105,7 +135,6 @@ impl RustAnalyzerLsp {
             }
         }
 
-        // Now attempt to spawn rust-analyzer
         let process = match async_process::Command::new("rust-analyzer")
             .current_dir(project.root())
             .stdin(Stdio::piped())
