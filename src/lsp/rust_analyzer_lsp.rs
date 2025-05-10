@@ -24,7 +24,7 @@ use tracing::{debug, info};
 
 use super::change_notifier::ChangeNotifier;
 use super::client_state::ClientState;
-use crate::lsp::LspNotification;
+use crate::lsp::{LspNotification, IndexingProgress};
 use crate::project::Project;
 use flume::Sender;
 
@@ -42,6 +42,10 @@ pub struct RustAnalyzerLsp {
 impl RustAnalyzerLsp {
     pub async fn new(project: &Project, notifier: Sender<LspNotification>) -> Result<Self> {
         let (indexed_tx, indexed_rx) = flume::unbounded();
+        
+        // Create a clone early for use in the client state
+        let notifier_for_client = notifier.clone();
+        
         let (mainloop, server) = async_lsp::MainLoop::new_client(|_server| {
             ServiceBuilder::new()
                 .layer(TracingLayer::default())
@@ -50,8 +54,8 @@ impl RustAnalyzerLsp {
                 .layer(ConcurrencyLayer::default())
                 .service(ClientState::new_router(
                     indexed_tx,
-                    notifier,
-                    project.root().to_path_buf(),
+                    notifier_for_client,
+                    project.root().clone(),
                 ))
         });
 
@@ -280,8 +284,7 @@ impl RustAnalyzerLsp {
                 },
                 ..InitializeParams::default()
             })
-            .await
-            .context("LSP initialize failed")?;
+            .await?;
         tracing::trace!("Initialized: {init_ret:?}");
         info!("LSP Initialized");
 
@@ -294,9 +297,47 @@ impl RustAnalyzerLsp {
 
         info!("Waiting for rust-analyzer indexing...");
         let rx = client.indexed_rx.lock().await.clone();
-        tokio::spawn(async move {
-            while let Ok(()) = rx.recv_async().await {
-                info!("rust-analyzer indexing finished.");
+        
+        // Start a background task to handle initial indexing completion
+        let project_path = project.root().clone();
+        let notifier_clone2 = notifier.clone();
+        let _task = tokio::spawn(async move {
+            // Create progress instance for this thread
+            let mut progress = IndexingProgress::new(project_path.clone());
+            progress.start_indexing();
+            
+            // We only care about the first completion signal
+            if let Ok(()) = rx.recv_async().await {
+                info!("rust-analyzer initial indexing finished");
+                
+                // Mark indexing as complete
+                progress.complete_indexing();
+                
+                // Send explicit "indexing finished" notification to update UI
+                if let Err(e) = notifier_clone2.try_send(LspNotification::IndexingProgress(progress)) {
+                    if matches!(e, flume::TrySendError::Disconnected(_)) {
+                        tracing::debug!("Channel closed when sending indexing completion: {}", e);
+                    } else {
+                        tracing::error!("Failed to send indexing completion: {}", e);
+                    }
+                }
+                
+                // Also send the legacy notification for backward compatibility
+                if let Err(e) = notifier_clone2.try_send(LspNotification::Indexing {
+                    project: project_path,
+                    is_indexing: false,
+                }) {
+                    if matches!(e, flume::TrySendError::Disconnected(_)) {
+                        tracing::debug!("Channel closed when sending legacy indexing status: {}", e);
+                    } else {
+                        tracing::error!("Failed to send legacy indexing status: {}", e);
+                    }
+                }
+                
+                // Drain any additional signals without processing them
+                while let Ok(()) = rx.try_recv() {
+                    tracing::trace!("Draining extra indexing completion signals");
+                }
             }
         });
 

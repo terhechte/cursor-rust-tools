@@ -32,6 +32,7 @@ impl ContextNotification {
     pub fn notification_path(&self) -> PathBuf {
         match self {
             ContextNotification::Lsp(LspNotification::Indexing { project, .. }) => project.clone(),
+            ContextNotification::Lsp(LspNotification::IndexingProgress(progress)) => progress.project.clone(),
             ContextNotification::Docs(DocsNotification::Indexing { project, .. }) => {
                 project.clone()
             }
@@ -50,6 +51,9 @@ impl ContextNotification {
                     "LSP Indexing: {}",
                     if *is_indexing { "Started" } else { "Finished" }
                 )
+            }
+            ContextNotification::Lsp(LspNotification::IndexingProgress(progress)) => {
+                format!("LSP Indexing: {}", progress.status_message())
             }
             ContextNotification::Docs(DocsNotification::Indexing { is_indexing, .. }) => {
                 format!(
@@ -134,19 +138,43 @@ impl Context {
                             project.is_indexing_docs.store(is_indexing, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
-                    Ok(ref notification @ LspNotification::Indexing { ref project, is_indexing }) = lsp_receiver.recv_async() => {
-                        if let Err(e) = cloned_notifier.try_send(ContextNotification::Lsp(notification.clone())) {
-                            if matches!(e, flume::TrySendError::Disconnected(_)) {
-                                tracing::debug!("Channel closed when forwarding LSP notification");
-                                break; // Exit the loop if the channel is disconnected
-                            } else {
-                                tracing::error!("Failed to send LSP notification: {}", e);
+                    Ok(notification) = lsp_receiver.recv_async() => {
+                        if let LspNotification::IndexingProgress(ref progress) = notification {
+                            // Handle indexing progress notification
+                            if let Err(e) = cloned_notifier.try_send(ContextNotification::Lsp(notification.clone())) {
+                                if matches!(e, flume::TrySendError::Disconnected(_)) {
+                                    tracing::debug!("Channel closed when forwarding LSP progress notification");
+                                    break; // Exit the loop if the channel is disconnected
+                                } else {
+                                    tracing::error!("Failed to send LSP progress notification: {}", e);
+                                }
+                            }
+                            
+                            // Also update the atomic flag for backward compatibility
+                            let mut projects: RwLockWriteGuard<'_, HashMap<PathBuf, Arc<ProjectContext>>> = cloned_projects.write().await;
+                            if let Some(project) = projects.get_mut(&progress.project) {
+                                project.is_indexing_lsp.store(progress.is_indexing, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        } else if let LspNotification::Indexing { ref project, is_indexing } = notification {
+                            // Handle legacy indexing notification
+                            if let Err(e) = cloned_notifier.try_send(ContextNotification::Lsp(notification.clone())) {
+                                if matches!(e, flume::TrySendError::Disconnected(_)) {
+                                    tracing::debug!("Channel closed when forwarding LSP notification");
+                                    break; // Exit the loop if the channel is disconnected
+                                } else {
+                                    tracing::error!("Failed to send LSP notification: {}", e);
+                                }
+                            }
+                            let mut projects: RwLockWriteGuard<'_, HashMap<PathBuf, Arc<ProjectContext>>> = cloned_projects.write().await;
+                            if let Some(project_ctx) = projects.get_mut(project) {
+                                project_ctx.is_indexing_lsp.store(is_indexing, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
-                        let mut projects: RwLockWriteGuard<'_, HashMap<PathBuf, Arc<ProjectContext>>> = cloned_projects.write().await;
-                        if let Some(project) = projects.get_mut(project) {
-                            project.is_indexing_lsp.store(is_indexing, std::sync::atomic::Ordering::Relaxed);
-                        }
+                    }
+                    else => {
+                        // All channels closed
+                        tracing::debug!("All message channels closed, exiting notification loop");
+                        break;
                     }
                 }
             }

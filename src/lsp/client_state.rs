@@ -2,7 +2,7 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 
 use super::Stop;
-use crate::lsp::LspNotification;
+use crate::lsp::{LspNotification, IndexingProgress};
 use async_lsp::router::Router;
 use async_lsp::{LanguageClient, ResponseError};
 use lsp_types::{
@@ -35,7 +35,74 @@ impl LanguageClient for ClientState {
             params.value,
             ProgressParamsValue::WorkDone(WorkDoneProgress::End(_))
         );
+        
+        // Extract more detailed progress information if available
+        let progress_message = match &params.value {
+            ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(begin)) => {
+                Some(begin.title.clone())
+            },
+            ProgressParamsValue::WorkDone(WorkDoneProgress::Report(report)) => {
+                report.message.clone()
+            },
+            _ => None,
+        };
+        
+        // Extract percentage if available
+        let progress_percentage = match &params.value {
+            ProgressParamsValue::WorkDone(WorkDoneProgress::Report(report)) => {
+                report.percentage.map(|p| p as f32)
+            },
+            _ => None,
+        };
+        
+        // Log progress events at a trace level to understand what's happening
+        if is_indexing {
+            if is_work_done {
+                tracing::debug!("Rust-analyzer indexing work done event");
+                
+                // Create a complete progress notification
+                let mut progress = IndexingProgress::new(self.project.clone());
+                progress.complete_indexing();
+                
+                // Try to send the detailed progress notification
+                if let Err(e) = self.notifier.try_send(LspNotification::IndexingProgress(progress)) {
+                    if matches!(e, flume::TrySendError::Disconnected(_)) {
+                        tracing::debug!("Channel closed when sending progress completion: {}", e);
+                    } else {
+                        tracing::error!("Failed to send progress completion: {}", e);
+                    }
+                }
+            } else {
+                tracing::debug!("Rust-analyzer indexing work progress: {:?} {:?}", 
+                              progress_message, progress_percentage);
+                
+                // Create an in-progress notification with details
+                let mut progress = IndexingProgress::new(self.project.clone());
+                progress.start_indexing();
+                
+                // Add detailed information if available
+                if let Some(msg) = progress_message {
+                    progress.status_message = Some(msg);
+                }
+                
+                if let Some(percent) = progress_percentage {
+                    progress.progress_percentage = Some(percent);
+                }
+                
+                // Try to send the detailed progress notification
+                if let Err(e) = self.notifier.try_send(LspNotification::IndexingProgress(progress)) {
+                    if matches!(e, flume::TrySendError::Disconnected(_)) {
+                        tracing::debug!("Channel closed when sending progress update: {}", e);
+                    } else {
+                        tracing::error!("Failed to send progress update: {}", e);
+                    }
+                }
+            }
+        }
+        
+        // Original legacy behavior for backward compatibility
         if is_indexing && !is_work_done {
+            // Use try_send to gracefully handle channel closure during shutdown
             if let Err(e) = self.notifier.try_send(LspNotification::Indexing {
                 project: self.project.clone(),
                 is_indexing: true,
@@ -48,6 +115,7 @@ impl LanguageClient for ClientState {
             }
         }
         if is_indexing && is_work_done {
+            // Use try_send to gracefully handle channel closure during shutdown
             if let Err(e) = self.notifier.try_send(LspNotification::Indexing {
                 project: self.project.clone(),
                 is_indexing: false,

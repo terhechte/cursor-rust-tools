@@ -10,6 +10,7 @@ use flume::Receiver;
 use crate::{
     context::{Context, ContextNotification},
     project::Project,
+    lsp::{LspNotification, IndexingProgress},
 };
 
 #[derive(Clone, Debug)]
@@ -44,6 +45,7 @@ pub struct App {
     selected_sidebar_tab: SidebarTab,
     selected_event: Option<TimestampedEvent>,
     project_descriptions: Vec<ProjectDescription>,
+    indexing_progress: HashMap<PathBuf, IndexingProgress>,
 }
 
 impl App {
@@ -61,6 +63,7 @@ impl App {
             selected_sidebar_tab: SidebarTab::Projects,
             selected_event: None,
             project_descriptions,
+            indexing_progress: HashMap::new(),
         }
     }
 
@@ -77,10 +80,34 @@ impl App {
             // If its not a new project notification, request projects
             self.context.request_project_descriptions();
 
+            // Handle detailed indexing progress notifications
+            if let ContextNotification::Lsp(LspNotification::IndexingProgress(progress)) = &notification {
+                has_new_events = true;
+                tracing::debug!("Received detailed indexing progress: {:?}", progress);
+                
+                // Store the progress information
+                self.indexing_progress.insert(progress.project.clone(), progress.clone());
+                
+                // Also add it to events for the event list
+                let project_path = notification.notification_path();
+                let Some(project) = find_root_project(&project_path, &self.project_descriptions) else {
+                    tracing::error!("Project not found: {:?}", project_path);
+                    continue;
+                };
+                let project_name = project.file_name().unwrap().to_string_lossy().to_string();
+                let timestamped_event = TimestampedEvent(chrono::Utc::now(), notification);
+                self.events
+                    .entry(project_name)
+                    .or_default()
+                    .push(timestamped_event);
+                
+                continue;
+            }
+            
             // Filter out high-volume LSP notifications but allow indexing notifications through
             if let ContextNotification::Lsp(lsp) = &notification {
                 // Let indexing notifications through to update the UI spinner
-                if matches!(lsp, crate::lsp::LspNotification::Indexing { .. }) {
+                if matches!(lsp, LspNotification::Indexing { .. }) {
                     has_new_events = true;
                     tracing::debug!("Received LSP indexing notification: {:?}", notification);
                     let project_path = notification.notification_path();
@@ -89,7 +116,7 @@ impl App {
                         continue;
                     };
                     let project_name = project.file_name().unwrap().to_string_lossy().to_string();
-                    let timestamped_event = TimestampedEvent(Utc::now(), notification);
+                    let timestamped_event = TimestampedEvent(chrono::Utc::now(), notification);
                     self.events
                         .entry(project_name)
                         .or_default()
@@ -109,7 +136,7 @@ impl App {
                     continue;
                 };
                 let project_name = project.file_name().unwrap().to_string_lossy().to_string();
-                let timestamped_event = TimestampedEvent(Utc::now(), notification);
+                let timestamped_event = TimestampedEvent(chrono::Utc::now(), notification);
                 self.events
                     .entry(project_name)
                     .or_default()
@@ -147,7 +174,41 @@ impl App {
                 let is_spinning = project.is_indexing_lsp || project.is_indexing_docs;
                 let is_selected = selected_path.as_ref() == Some(&project.root);
 
-                let cell = ListCell::new(&project.name, is_selected, is_spinning);
+                // Get detailed progress information if available
+                let status_text = if let Some(progress) = self.indexing_progress.get(&project.root) {
+                    if progress.is_indexing {
+                        // Format a detailed status message
+                        let mut text = project.name.clone();
+                        
+                        // Add file count if available
+                        if let Some(files) = progress.estimated_files {
+                            text.push_str(&format!(" ({} files", files));
+                            
+                            // Add crate count if available
+                            if let Some(crates) = progress.crate_count {
+                                text.push_str(&format!(", {} crates", crates));
+                            }
+                            
+                            text.push(')');
+                        }
+                        
+                        // Add the progress message
+                        if let Some(ref msg) = progress.status_message {
+                            text.push_str(&format!("\n{}", msg));
+                        }
+                        
+                        // Add elapsed time
+                        text.push_str(&format!(" - {}", progress.elapsed_time()));
+                        
+                        text
+                    } else {
+                        project.name.clone()
+                    }
+                } else {
+                    project.name.clone()
+                };
+
+                let cell = ListCell::new(&status_text, is_selected, is_spinning);
                 let response = cell.show(ui);
 
                 if response.clicked() {
@@ -319,7 +380,13 @@ impl App {
                         ui.add_space(10.0);
                         if project.is_indexing_lsp {
                             ui.add(egui::Spinner::new());
-                            ui.label("Indexing LSP...");
+                            
+                            // Show detailed progress information if available
+                            if let Some(progress) = self.indexing_progress.get(&project.root) {
+                                ui.label(progress.status_message());
+                            } else {
+                                ui.label("Indexing LSP...");
+                            }
                         }
                         ui.add_space(10.0);
                         if project.is_indexing_docs {
@@ -346,7 +413,10 @@ impl App {
                                             for event_tuple in project_events.iter().rev() {
                                                 // Only filter out non-indexing LSP notifications
                                                 if let ContextNotification::Lsp(lsp) = &event_tuple.1 {
-                                                    if !matches!(lsp, crate::lsp::LspNotification::Indexing { .. }) {
+                                                    if !matches!(lsp, 
+                                                        crate::lsp::LspNotification::Indexing { .. } | 
+                                                        crate::lsp::LspNotification::IndexingProgress(_)
+                                                    ) {
                                                         continue;
                                                     }
                                                 }
