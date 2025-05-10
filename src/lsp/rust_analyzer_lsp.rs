@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
 use async_lsp::concurrency::ConcurrencyLayer;
@@ -37,6 +38,8 @@ pub struct RustAnalyzerLsp {
     indexed_rx: Mutex<flume::Receiver<()>>,
     #[allow(dead_code)] // Keep the handle to ensure the change notifier runs
     change_notifier: ChangeNotifier,
+    // Track whether initial indexing is complete to avoid infinite reindexing
+    initial_indexing_complete: AtomicBool,
 }
 
 impl RustAnalyzerLsp {
@@ -248,6 +251,7 @@ impl RustAnalyzerLsp {
             mainloop_handle: Mutex::new(Some(mainloop_handle)),
             indexed_rx: Mutex::new(indexed_rx),
             change_notifier,
+            initial_indexing_complete: AtomicBool::new(false),
         };
 
         // Initialize.
@@ -301,6 +305,7 @@ impl RustAnalyzerLsp {
         // Start a background task to handle initial indexing completion
         let project_path = project.root().clone();
         let notifier_clone2 = notifier.clone();
+        client.initial_indexing_complete.store(false, Ordering::SeqCst);
         let _task = tokio::spawn(async move {
             // Create progress instance for this thread
             let mut progress = IndexingProgress::new(project_path.clone());
@@ -335,8 +340,12 @@ impl RustAnalyzerLsp {
                 }
                 
                 // Drain any additional signals without processing them
+                let mut drain_count = 0;
                 while let Ok(()) = rx.try_recv() {
-                    tracing::trace!("Draining extra indexing completion signals");
+                    drain_count += 1;
+                }
+                if drain_count > 0 {
+                    tracing::debug!("Drained {} additional indexing signals", drain_count);
                 }
             }
         });
@@ -405,7 +414,8 @@ impl RustAnalyzerLsp {
 
     #[allow(dead_code)]
     pub async fn open_file(&self, relative_path: impl AsRef<Path>, text: String) -> Result<()> {
-        let uri = self.project.file_uri(relative_path)?;
+        let path_ref = relative_path.as_ref();
+        let uri = self.project.file_uri(path_ref)?;
         self.server
             .lock()
             .await
@@ -418,12 +428,28 @@ impl RustAnalyzerLsp {
                 },
             })
             .context("Sending DidOpen notification failed")?;
+
+        // Check if indexing is already complete
+        if self.initial_indexing_complete.load(Ordering::SeqCst) {
+            // Skip waiting for indexing signals if we've already completed indexing
+            tracing::debug!("Skipping indexing wait for file (already indexed)");
+            return Ok(());
+        }
+
+        tracing::debug!("Waiting for indexing to complete for file: {:?}", path_ref);
+        
+        // Wait for indexing to complete
         self.indexed_rx
             .lock()
             .await
             .recv_async()
             .await
             .context("Failed waiting for index")?;
+        
+        // Mark indexing as complete
+        self.initial_indexing_complete.store(true, Ordering::SeqCst);
+        tracing::debug!("Indexing completed while opening file: {:?}", path_ref);
+        
         Ok(())
     }
 

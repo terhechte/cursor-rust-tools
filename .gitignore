@@ -1,3 +1,5 @@
+/debug
 /target
 .DS_Store
 .docs-cache
+.cursor-rust-tools

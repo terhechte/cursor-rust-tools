@@ -33,6 +33,7 @@ impl ContextNotification {
         match self {
             ContextNotification::Lsp(LspNotification::Indexing { project, .. }) => project.clone(),
             ContextNotification::Lsp(LspNotification::IndexingProgress(progress)) => progress.project.clone(),
+            ContextNotification::Lsp(LspNotification::IndexingPauseResume { project, .. }) => project.clone(),
             ContextNotification::Docs(DocsNotification::Indexing { project, .. }) => {
                 project.clone()
             }
@@ -54,6 +55,12 @@ impl ContextNotification {
             }
             ContextNotification::Lsp(LspNotification::IndexingProgress(progress)) => {
                 format!("LSP Indexing: {}", progress.status_message())
+            }
+            ContextNotification::Lsp(LspNotification::IndexingPauseResume { should_pause, .. }) => {
+                format!(
+                    "LSP Indexing: {}",
+                    if *should_pause { "Paused" } else { "Resumed" }
+                )
             }
             ContextNotification::Docs(DocsNotification::Indexing { is_indexing, .. }) => {
                 format!(
@@ -500,16 +507,40 @@ impl Context {
         None
     }
 
+    /// Forces doc indexing for the given project
     pub async fn force_index_docs(&self, project: &PathBuf) -> Result<()> {
-        let Some(project_context) = self.get_project(project).await else {
+        let Some(_project_context) = self.get_project(project).await else {
             return Err(anyhow::anyhow!("Project not found"));
         };
-        let oldval = project_context
+        let oldval = _project_context
             .is_indexing_docs
             .load(std::sync::atomic::Ordering::Relaxed);
-        project_context
+        _project_context
             .is_indexing_docs
             .store(!oldval, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Toggles pause/resume for the LSP indexing process
+    pub async fn toggle_indexing_pause(&self, project: &PathBuf, should_pause: bool) -> Result<()> {
+        // Get the project context
+        let Some(_project_context) = self.get_project(project).await else {
+            return Err(anyhow::anyhow!("Project not found"));
+        };
+        
+        // Send the pause/resume notification
+        self.lsp_sender.send(LspNotification::IndexingPauseResume {
+            project: project.clone(),
+            should_pause,
+        })?;
+        
+        // Log the action
+        tracing::info!(
+            "Sent indexing {} command for project {:?}",
+            if should_pause { "pause" } else { "resume" },
+            project
+        );
+        
         Ok(())
     }
 

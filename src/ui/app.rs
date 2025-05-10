@@ -379,14 +379,39 @@ impl App {
                         }
                         ui.add_space(10.0);
                         if project.is_indexing_lsp {
-                            ui.add(egui::Spinner::new());
-                            
-                            // Show detailed progress information if available
-                            if let Some(progress) = self.indexing_progress.get(&project.root) {
-                                ui.label(progress.status_message());
-                            } else {
-                                ui.label("Indexing LSP...");
-                            }
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Spinner::new());
+                                
+                                // Show detailed progress information if available
+                                if let Some(progress) = self.indexing_progress.get(&project.root) {
+                                    // Show pause/resume button
+                                    if progress.is_paused {
+                                        if ui.button("▶ Resume").clicked() {
+                                            let context = self.context.clone();
+                                            let project_root = project.root.clone();
+                                            tokio::spawn(async move {
+                                                if let Err(e) = context.toggle_indexing_pause(&project_root, false).await {
+                                                    tracing::error!("Failed to resume indexing: {}", e);
+                                                }
+                                            });
+                                        }
+                                    } else {
+                                        if ui.button("⏸ Pause").clicked() {
+                                            let context = self.context.clone();
+                                            let project_root = project.root.clone();
+                                            tokio::spawn(async move {
+                                                if let Err(e) = context.toggle_indexing_pause(&project_root, true).await {
+                                                    tracing::error!("Failed to pause indexing: {}", e);
+                                                }
+                                            });
+                                        }
+                                    }
+                                    
+                                    ui.label(progress.status_message());
+                                } else {
+                                    ui.label("Indexing LSP...");
+                                }
+                            });
                         }
                         ui.add_space(10.0);
                         if project.is_indexing_docs {

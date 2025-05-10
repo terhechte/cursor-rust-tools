@@ -30,7 +30,7 @@ impl LanguageClient for ClientState {
     fn progress(&mut self, params: ProgressParams) -> Self::NotifyResult {
         tracing::trace!("{:?} {:?}", params.token, params.value);
         let is_indexing =
-            matches!(params.token, NumberOrString::String(s) if RA_INDEXING_TOKENS.contains(&&*s));
+            matches!(params.token, NumberOrString::String(ref s) if RA_INDEXING_TOKENS.contains(&s.as_str()));
         let is_work_done = matches!(
             params.value,
             ProgressParamsValue::WorkDone(WorkDoneProgress::End(_))
@@ -39,10 +39,17 @@ impl LanguageClient for ClientState {
         // Extract more detailed progress information if available
         let progress_message = match &params.value {
             ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(begin)) => {
+                tracing::debug!("Indexing Begin: token={:?}, title={:?}", params.token, begin.title);
                 Some(begin.title.clone())
             },
             ProgressParamsValue::WorkDone(WorkDoneProgress::Report(report)) => {
+                tracing::debug!("Indexing Report: token={:?}, message={:?}, percentage={:?}", 
+                             params.token, report.message, report.percentage);
                 report.message.clone()
+            },
+            ProgressParamsValue::WorkDone(WorkDoneProgress::End(end)) => {
+                tracing::debug!("Indexing End: token={:?}, message={:?}", params.token, end.message);
+                end.message.clone()
             },
             _ => None,
         };
@@ -55,7 +62,7 @@ impl LanguageClient for ClientState {
             _ => None,
         };
         
-        // Log progress events at a trace level to understand what's happening
+        // Handle detailed indexing progress notifications
         if is_indexing {
             if is_work_done {
                 tracing::debug!("Rust-analyzer indexing work done event");
@@ -70,6 +77,29 @@ impl LanguageClient for ClientState {
                         tracing::debug!("Channel closed when sending progress completion: {}", e);
                     } else {
                         tracing::error!("Failed to send progress completion: {}", e);
+                    }
+                }
+                
+                // Also send the legacy indexing completion signal
+                if let Err(e) = self.notifier.try_send(LspNotification::Indexing {
+                    project: self.project.clone(),
+                    is_indexing: false,
+                }) {
+                    if matches!(e, flume::TrySendError::Disconnected(_)) {
+                        tracing::debug!("Channel closed when sending indexing end: {}", e);
+                    } else {
+                        tracing::error!("Failed to send indexing notification: {}", e);
+                    }
+                }
+
+                // Send the completion signal
+                if let Some(tx) = &self.indexed_tx {
+                    if let Err(e) = tx.try_send(()) {
+                        if matches!(e, flume::TrySendError::Disconnected(_)) {
+                            tracing::debug!("Channel closed when sending indexing completion: {}", e);
+                        } else {
+                            tracing::error!("Failed to send indexing completion signal: {}", e);
+                        }
                     }
                 }
             } else {
@@ -97,46 +127,21 @@ impl LanguageClient for ClientState {
                         tracing::error!("Failed to send progress update: {}", e);
                     }
                 }
-            }
-        }
-        
-        // Original legacy behavior for backward compatibility
-        if is_indexing && !is_work_done {
-            // Use try_send to gracefully handle channel closure during shutdown
-            if let Err(e) = self.notifier.try_send(LspNotification::Indexing {
-                project: self.project.clone(),
-                is_indexing: true,
-            }) {
-                if matches!(e, flume::TrySendError::Disconnected(_)) {
-                    tracing::debug!("Channel closed when sending indexing start: {}", e);
-                } else {
-                    tracing::error!("Failed to send indexing notification: {}", e);
-                }
-            }
-        }
-        if is_indexing && is_work_done {
-            // Use try_send to gracefully handle channel closure during shutdown
-            if let Err(e) = self.notifier.try_send(LspNotification::Indexing {
-                project: self.project.clone(),
-                is_indexing: false,
-            }) {
-                if matches!(e, flume::TrySendError::Disconnected(_)) {
-                    tracing::debug!("Channel closed when sending indexing end: {}", e);
-                } else {
-                    tracing::error!("Failed to send indexing notification: {}", e);
-                }
-            }
-
-            if let Some(tx) = &self.indexed_tx {
-                if let Err(e) = tx.try_send(()) {
+                
+                // Also send the legacy in-progress notification
+                if let Err(e) = self.notifier.try_send(LspNotification::Indexing {
+                    project: self.project.clone(),
+                    is_indexing: true,
+                }) {
                     if matches!(e, flume::TrySendError::Disconnected(_)) {
-                        tracing::debug!("Channel closed when sending indexing completion: {}", e);
+                        tracing::debug!("Channel closed when sending indexing start: {}", e);
                     } else {
-                        tracing::error!("Failed to send indexing completion signal: {}", e);
+                        tracing::error!("Failed to send indexing notification: {}", e);
                     }
                 }
             }
         }
+        
         ControlFlow::Continue(())
     }
 
