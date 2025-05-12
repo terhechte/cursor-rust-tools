@@ -14,7 +14,7 @@ use crate::project::Project;
 #[derive(Debug)]
 pub struct ChangeNotifier {
     #[allow(dead_code)] // Keep the handle to ensure the change notifier runs
-    debouncer: Debouncer<FsEventWatcher>,
+    debouncer: Debouncer<RecommendedWatcher>,
 }
 
 impl ChangeNotifier {
