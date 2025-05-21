@@ -504,8 +504,15 @@ fn find_root_project(mut path: &Path, projects: &[ProjectDescription]) -> Option
 }
 
 fn create_mcp_configuration_file(path: &Path, contents: String) -> anyhow::Result<()> {
-    let config_path = PathBuf::from(path).join(".cursor/mcp.json");
-    std::fs::create_dir_all(&config_path)?;
-    std::fs::write(config_path, contents)?;
+    let config_dir = PathBuf::from(path).join(".cursor");
+    let config_path = config_dir.join("mcp.json");
+    if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        tracing::error!("Failed to create directory {:?}. Error: {}", config_dir, e);
+        return Err(e.into());
+    }
+    if let Err(e) = std::fs::write(&config_path, &contents) {
+        tracing::error!("Failed to write mcp.json at {:?} with contents: {}. Error: {}", config_path, contents, e);
+        return Err(e.into());
+    }
     Ok(())
 }
